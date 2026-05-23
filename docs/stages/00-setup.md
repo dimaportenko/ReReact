@@ -1,6 +1,6 @@
 # Stage 00 — Setup
 
-**Status:** Not started
+**Status:** Done
 **Runnable when done:** `npm test` runs the `node:test` runner against an empty/sample spec and passes.
 
 ## Goal
@@ -23,11 +23,15 @@ modern Node runs ESM and has a built-in test runner, so there's no bundler or fr
 
 ## Build log
 
-- _pending_
+- _2026-05-23_ — Added `package.json` (`"type": "module"`, `test` → `node --test`, no
+  deps) and `test/smoke.test.js` (`node:test` + `node:assert`). `npm test` green on Node 22.
 
 ## Gotchas & surprises
 
-- _pending_
+- `node --test` with zero matching files isn't a real pass — added a smoke test so the
+  toolchain is genuinely exercised.
+- Git won't track empty directories, so the `src/` subfolders will appear alongside their
+  first real file (Stage 1) rather than as committed placeholders.
 
 ## Verify
 

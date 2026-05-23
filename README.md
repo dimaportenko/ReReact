@@ -28,7 +28,7 @@ being taught requires it.
 Built in this order so we always have something runnable on screen. Each links to its
 living [stage doc](docs/) (design notes + build log + gotchas):
 
-- [ ] **[Stage 0 — Setup](docs/stages/00-setup.md).** `package.json` (ESM), test runner (`node:test`), folder skeleton.
+- [x] **[Stage 0 — Setup](docs/stages/00-setup.md).** `package.json` (ESM), test runner (`node:test`), folder skeleton.
 - [ ] **[Stage 1 — Runtime](docs/stages/01-runtime.md).** The element contract: `createElement(type, props, ...children)`, `Fragment`, primitives. Write JSX calls *by hand* for now.
 - [ ] **[Stage 2 — Static render](docs/stages/02-static-render.md).** `render(element, container)`: build real DOM from an element tree. Attributes, events, text, function components.
 - [ ] **[Stage 3 — Reconciliation](docs/stages/03-reconciliation.md).** Re-render and *diff* against the previous tree: update / replace / remove nodes. Keys for lists.
