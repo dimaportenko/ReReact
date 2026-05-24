@@ -15,7 +15,7 @@ Living documentation for the build. Code shows *what* we built; these docs captu
 | # | Stage | Doc | Status |
 |---|-------|-----|--------|
 | 0 | Setup | [00-setup](stages/00-setup.md) | Done |
-| 1 | Runtime | [01-runtime](stages/01-runtime.md) | Not started |
+| 1 | Runtime | [01-runtime](stages/01-runtime.md) | Done |
 | 2 | Static render | [02-static-render](stages/02-static-render.md) | Not started |
 | 3 | Reconciliation | [03-reconciliation](stages/03-reconciliation.md) | Not started |
 | 4 | Hooks | [04-hooks](stages/04-hooks.md) | Not started |

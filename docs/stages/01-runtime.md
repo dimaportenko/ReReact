@@ -1,6 +1,6 @@
 # Stage 01 — Runtime
 
-**Status:** Not started
+**Status:** Done
 **Runnable when done:** `createElement(...)` produces the element tree, proven by passing tests; `Fragment` exists.
 
 ## Goal
@@ -34,11 +34,18 @@ See `src/runtime/index.js`.
 
 ## Build log
 
-- _pending_
+- _2026-05-24_ — Implemented `createElement` + `Fragment` in `src/runtime/index.js`; 4 tests
+  in `test/runtime.test.js` (element shape, flatten, component-not-called, key lifted).
+  `npm test` green (5 total).
 
 ## Gotchas & surprises
 
-- _pending_
+- `{list.map(...)}` arrives as a **single array child**, so `children.flat(Infinity)` is
+  what makes inline children and mapped children behave the same.
+- Children are normalized to an array even for 0/1 child (React leaves a single child
+  unwrapped) — a deliberate divergence for a uniform renderer; see `decisions.md`.
+- `createElement` stays a dumb constructor: it does **not** filter `null`/`false`/`undefined`
+  children. Deciding what renders to nothing is the Stage 2 renderer's job.
 
 ## Verify
 

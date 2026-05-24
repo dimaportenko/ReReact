@@ -5,6 +5,14 @@ entries at the top. Each: the decision, why, and what we traded away.
 
 ---
 
+### 2026-05-24 — `createElement` children are always a (flattened) array
+
+Children are normalized to a flat array regardless of count, via `children.flat(Infinity)`.
+**Why:** the renderer/reconciler can iterate uniformly with no single-vs-many special case,
+and flattening makes `{list.map(...)}` (which arrives as one array child) behave like inline
+children. **Trade-off:** diverges from real React, which leaves a single child unwrapped —
+the reason `React.Children` helpers exist.
+
 ### 2026-05-23 — `children` live inside `props`
 
 Mirror real React: `createElement` stores children as `props.children`, not a separate
