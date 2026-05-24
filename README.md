@@ -31,7 +31,7 @@ living [stage doc](docs/) (design notes + build log + gotchas):
 - [x] **[Stage 0 — Setup](docs/stages/00-setup.md).** `package.json` (ESM), test runner (`node:test`), folder skeleton.
 - [x] **[Stage 1 — Runtime](docs/stages/01-runtime.md).** The element contract: `createElement(type, props, ...children)`, `Fragment`, primitives. Write JSX calls *by hand* for now.
 - [x] **[Stage 2 — Static render](docs/stages/02-static-render.md).** `render(element, container)`: build real DOM from an element tree. Attributes, events, text, function components.
-- [ ] **[Stage 3 — Reconciliation](docs/stages/03-reconciliation.md).** Re-render and *diff* against the previous tree: update / replace / remove nodes. Keys for lists.
+- [x] **[Stage 3 — Reconciliation](docs/stages/03-reconciliation.md).** Re-render and *diff* against the previous tree: update / replace / remove nodes. Keys for lists.
 - [ ] **[Stage 4 — Hooks](docs/stages/04-hooks.md).** `useState` + scheduled re-render, then `useEffect`, `useRef`, `useMemo`.
 - [ ] **[Stage 5 — Compiler](docs/stages/05-compiler.md).** Hand-rolled JSX compiler: tokenizer → parser → codegen emitting `createElement` calls, wired as a `.jsx` → `.js` transform. *Now the by-hand calls from Stage 1 become real JSX.*
 

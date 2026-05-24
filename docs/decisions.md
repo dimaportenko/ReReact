@@ -5,6 +5,21 @@ entries at the top. Each: the decision, why, and what we traded away.
 
 ---
 
+### 2026-05-24 — Reconcile by diffing the new tree against the previous one
+
+`render` stashes the last normalized vtree on the container (a `Symbol` prop) and diffs the
+next render against it; each vnode is tagged with its `.dom` (components also keep `._rendered`).
+**Why:** enables update-in-place and minimal DOM ops without a separate patch list.
+**Trade-off:** we mutate vnodes to cache `.dom` and normalized children — an internal
+annotation, not pure data.
+
+### 2026-05-24 — Single-root model; fragments & multi-root components deferred to fibers
+
+The simple recursive diff assumes **one vnode ↔ one DOM node**, so components must return a
+single element and `<>...</>` isn't reconciled (the Stage 2 Fragment test was dropped).
+**Why:** keeps the diff tractable and understandable. **Trade-off:** a genuine limitation —
+and precisely what the fiber architecture exists to remove (a later milestone).
+
 ### 2026-05-24 — Render via `container.ownerDocument`; test with jsdom
 
 The renderer reads `container.ownerDocument` instead of a global `document`, so identical

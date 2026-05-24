@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { createElement, Fragment } from "../src/runtime/index.js";
+import { createElement } from "../src/runtime/index.js";
 import { render } from "../src/dom/index.js";
 
 const newContainer = () =>
@@ -18,15 +18,6 @@ test("calls function components", () => {
   const Hi = ({ name }) => createElement("span", null, `hi ${name}`);
   render(createElement(Hi, { name: "ann" }), root);
   assert.equal(root.innerHTML, "<span>hi ann</span>");
-});
-
-test("Fragment adds no wrapper node", () => {
-  const root = newContainer();
-  render(
-    createElement(Fragment, null, createElement("i", null, "a"), "b"),
-    root,
-  );
-  assert.equal(root.innerHTML, "<i>a</i>b");
 });
 
 test("onClick attaches a real listener", () => {

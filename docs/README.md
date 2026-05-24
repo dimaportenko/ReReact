@@ -17,7 +17,7 @@ Living documentation for the build. Code shows *what* we built; these docs captu
 | 0 | Setup | [00-setup](stages/00-setup.md) | Done |
 | 1 | Runtime | [01-runtime](stages/01-runtime.md) | Done |
 | 2 | Static render | [02-static-render](stages/02-static-render.md) | Done |
-| 3 | Reconciliation | [03-reconciliation](stages/03-reconciliation.md) | Not started |
+| 3 | Reconciliation | [03-reconciliation](stages/03-reconciliation.md) | Done |
 | 4 | Hooks | [04-hooks](stages/04-hooks.md) | Not started |
 | 5 | Compiler | [05-compiler](stages/05-compiler.md) | Not started |
 
