@@ -5,6 +5,14 @@ entries at the top. Each: the decision, why, and what we traded away.
 
 ---
 
+### 2026-05-24 — Render via `container.ownerDocument`; test with jsdom
+
+The renderer reads `container.ownerDocument` instead of a global `document`, so identical
+code runs in the browser and under jsdom. Automated tests use **jsdom** (a test-only
+devDependency) so `npm test` exercises the DOM renderer headlessly; a browser
+`examples/*.html` covers the tactile "does it really click" check. **Trade-off:** one
+devDependency — but it's test-only and hides nothing about React itself.
+
 ### 2026-05-24 — `createElement` children are always a (flattened) array
 
 Children are normalized to a flat array regardless of count, via `children.flat(Infinity)`.

@@ -1,6 +1,6 @@
 # Stage 02 — Static render
 
-**Status:** Not started
+**Status:** Done
 **Runnable when done:** `render(element, container)` paints an element tree into real DOM (no updates yet).
 
 ## Goal
@@ -22,11 +22,21 @@ to produce their element tree, and that recursion bottoms out at text nodes.
 
 ## Build log
 
-- _pending_
+- _2026-05-24_ — Implemented `render(element, container)` in `src/dom/index.js` (5 cases:
+  null/boolean → nothing, primitive → text, function → component, Fragment → children,
+  string → host) plus `applyProps` (events, `className`, `style`, attributes). 5 tests in
+  `test/dom.test.js` via jsdom; `examples/hello/` browser demo. `npm test` green (9 total).
+  Removed the Stage 0 smoke test now that real tests exist.
 
 ## Gotchas & surprises
 
-- _pending_
+- Renderer reads `container.ownerDocument` rather than a global `document`, so the same
+  code runs in the browser and under jsdom — tests just pass a jsdom `<body>`.
+- Deferred simplifications: `setAttribute` ignores DOM *properties* (`value`/`checked`);
+  `disabled={false}` still renders the attribute present; `onDoubleClick` → `"doubleclick"`
+  is not the real `dblclick` event.
+- Mount-only: calling `render` twice **appends twice** — no clearing/diffing until Stage 3.
+- ES modules need `http://`, not `file://` — serve examples (`python3 -m http.server`).
 
 ## Verify
 
@@ -34,5 +44,5 @@ Render a small tree (nested elements + a component + an `onClick`) and confirm t
 
 ## Open questions / next
 
-- Where to render for tests vs demos (browser vs jsdom)?
+- ~~Where to render for tests vs demos?~~ Resolved: jsdom for automated tests + a browser `examples/*.html` for feel (see `decisions.md`).
 - Unblocks Stage 03 (reconciliation): instead of always rebuilding, diff against the prior tree.
