@@ -3,6 +3,9 @@
 const TEXT = Symbol("rereact.text");
 const ROOT = Symbol("rereact.root");
 
+let currentInstance = null;
+let hookIndex = 0;
+
 export function render(vnode, container) {
   const next = normalize(vnode);
   diff(container, next, container[ROOT] ?? null);
@@ -52,11 +55,13 @@ function mount(parentDom, vnode, anchor) {
   const doc = parentDom.ownerDocument;
 
   if (typeof vnode.type === "function") {
-    const rendered = normalize(vnode.type(vnode.props));
+    const instance = { hooks: [], vnode, parentDom, rendered: null };
+    vnode._instance = instance;
+    const rendered = renderComponent(instance);
     if (rendered) {
       mount(parentDom, rendered, anchor);
     }
-    vnode._rendered = rendered;
+    instance.rendered = rendered;
     vnode.dom = rendered ? rendered.dom : null;
     return;
   }
@@ -83,10 +88,10 @@ function update(newVNode, oldVNode) {
   newVNode.dom = oldVNode.dom;
 
   if (typeof newVNode.type === "function") {
-    const rendered = normalize(newVNode.type(newVNode.props));
-    diff(oldVNode.dom.parentNode, rendered, oldVNode._rendered ?? null);
-    newVNode._rendered = rendered;
-    newVNode.dom = rendered ? rendered.dom : null;
+    const instance = oldVNode._instance;
+    instance.vnode = newVNode;
+    newVNode._instance = instance;
+    rerender(instance);
     return;
   }
 
@@ -181,4 +186,29 @@ function removeProp(dom, name, oldValue) {
   } else {
     dom.removeAttribute(name);
   }
+}
+
+function renderComponent(instance) {
+  currentInstance = instance;
+  hookIndex = 0;
+  const output = normalize(instance.vnode.type(instance.vnode.props));
+  currentInstance = null;
+  return output;
+}
+
+function rerender(instance) {
+  const rendered = renderComponent(instance);
+  diff(instance.parentDom, rendered, instance.rendered);
+  instance.rendered = rendered;
+  instance.vnode.dom = rendered ? rendered.dom : null;
+}
+
+export function useState(initial) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  if (i >= instance.hooks.length) {
+    instance.hooks[i] = initial; // only on first render of this slot
+  }
+  const setState = () => {}; // TODO: implement in Step 2
+  return [instance.hooks[i], setState];
 }
