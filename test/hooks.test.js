@@ -17,3 +17,27 @@ test("useState returns its initial value on first render", () => {
   render(createElement(Counter, null), root);
   assert.equal(root.querySelector("p").textContent, "7");
 });
+
+test("setState re-renders the component in place", () => {
+  const root = newContainer();
+
+  function Counter() {
+    const [count, setCount] = useState(0);
+    return createElement(
+      "button",
+      { onClick: () => setCount(count + 1) },
+      `count: ${count}`,
+    );
+  }
+
+  render(createElement(Counter, null), root);
+  const button = root.querySelector("button");
+  assert.equal(button.textContent, "count: 0");
+
+  button.click();
+  assert.equal(button.textContent, "count: 1");
+  assert.equal(root.querySelector("button"), button); // same node, updated in place
+
+  button.click();
+  assert.equal(button.textContent, "count: 2");
+});

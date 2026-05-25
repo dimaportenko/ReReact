@@ -3,10 +3,26 @@
   <div id="root"></div>
   <script type="module">
     import { createElement } from "../../src/runtime/index.js";
-    import { render } from "../../src/dom/index.js";
+    import { render, useState } from "../../src/dom/index.js";
+
+    function Counter() {
+      const [count, setCount] = useState(7);
+      return createElement(
+        "div",
+        null,
+        createElement("p", null, count),
+        createElement(
+          "button",
+          { onClick: () => setCount(count + 1) },
+          "Click Me!",
+        ),
+      );
+    }
+
+    // render(createElement(Counter, null), root);
 
     render(
-      createElement("button", { onClick: () => alert("hi") }, "Click Me!"),
+      createElement("div", null, createElement(Counter)),
       document.getElementById("root"),
     );
   </script>

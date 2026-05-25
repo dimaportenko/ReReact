@@ -138,3 +138,79 @@ clobber each other — no dispatcher stack needed for our recursive model.
 
 After this, `npm test` should be 14 green. The setter is still a stub — Step 2 makes it call
 `rerender`, and the counter actually counts.
+
+> **Status:** done — committed in `50508a8` (14 tests green).
+
+---
+
+## Step 2 — `setState` triggers a targeted re-render
+
+The setter was a stub. Now it writes the new value and re-runs the component through the
+`rerender` path we already built in Step 1 — so this step is *only* the setter body; the
+re-render + diff machinery is reused unchanged.
+
+**Runnable test first** — add to `test/hooks.test.js`:
+
+```js
+test("setState re-renders the component in place", () => {
+  const root = newContainer();
+  function Counter() {
+    const [count, setCount] = useState(0);
+    return createElement(
+      "button",
+      { onClick: () => setCount(count + 1) },
+      `count: ${count}`,
+    );
+  }
+  render(createElement(Counter, null), root);
+  const button = root.querySelector("button");
+  assert.equal(button.textContent, "count: 0");
+
+  button.click();
+  assert.equal(button.textContent, "count: 1");
+  assert.equal(root.querySelector("button"), button); // same node, updated in place
+
+  button.click();
+  assert.equal(button.textContent, "count: 2");
+});
+```
+
+Run it — the clicks do nothing yet, so it fails at `count: 1`.
+
+**Minimal implementation** — replace the `setState` stub in `useState`:
+
+```js
+export function useState(initial) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  if (i >= instance.hooks.length) {
+    instance.hooks[i] = initial;
+  }
+  const setState = (next) => {
+    const value = typeof next === "function" ? next(instance.hooks[i]) : next;
+    if (Object.is(value, instance.hooks[i])) return; // nothing changed → skip
+    instance.hooks[i] = value;
+    rerender(instance);
+  };
+  return [instance.hooks[i], setState];
+}
+```
+
+Why this works:
+
+- The setter closes over **`instance` and the slot index `i`**, never the value — so it always
+  reads/writes the live `instance.hooks[i]`, even on the next render.
+- It accepts both forms: `setCount(5)` and `setCount(c => c + 1)`.
+- `rerender(instance)` re-runs the component (re-arming the dispatcher, cursor back to 0, so
+  the same `useState` call hits slot `i` again and now reads the updated value) and feeds the
+  output through `diff`. The `<button>` keeps the same `type`, so `diff` → `update` patches it
+  in place and only the text node changes — that's why `root.querySelector("button") === button`.
+- The stale-closure trap is dodged *for free*: each re-render produces a fresh `onClick` whose
+  closure captures the new `count`, and the reconciler swaps the listener (Stage 3's
+  add/remove-listener logic). So `setCount(count + 1)` works without the functional form.
+- `Object.is` bail-out mirrors real React: setting state to its current value does no work.
+
+After this, `npm test` should be 15 green, and the counter counts on every click.
+
+Next: **Step 3 — multiple `useState` per component** (proves the cursor indexes slots
+independently; updating one piece of state leaves the other intact).

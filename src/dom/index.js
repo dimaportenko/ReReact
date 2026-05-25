@@ -209,6 +209,13 @@ export function useState(initial) {
   if (i >= instance.hooks.length) {
     instance.hooks[i] = initial; // only on first render of this slot
   }
-  const setState = () => {}; // TODO: implement in Step 2
+  const setState = (next) => {
+    const value = typeof next === "function" ? next(instance.hooks[i]) : next;
+    if (Object.is(value, instance.hooks[i])) {
+      return;
+    }
+    instance.hooks[i] = value;
+    rerender(instance);
+  };
   return [instance.hooks[i], setState];
 }
