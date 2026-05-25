@@ -15,6 +15,12 @@ When you think code is the next step, *offer* and wait for an explicit "yes, wri
 Docs are the exception: writing/updating `docs/`, `README.md`, and this file is fine
 without asking, since documentation (not implementation) is the project deliverable here.
 
+## Rule: suggest in small, test-first steps
+
+Don't dump a whole module. Break suggestions into small steps (one idea each); for each,
+give a **runnable test first** — so the expected output is visible and the user can verify
+their code as they write it — then the minimal implementation for that step.
+
 ## What this is
 
 `rereact` is an **educational** project: rebuilding React from scratch to learn how it
