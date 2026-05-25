@@ -212,5 +212,49 @@ Why this works:
 
 After this, `npm test` should be 15 green, and the counter counts on every click.
 
-Next: **Step 3 — multiple `useState` per component** (proves the cursor indexes slots
-independently; updating one piece of state leaves the other intact).
+> **Status:** done — committed in `21b6301` (15 tests green). Same commit wires the
+> `examples/hello` page to a working click counter.
+
+---
+
+## Step 3 — multiple `useState` per component
+
+**No implementation change needed** — the Step 1–2 machinery already handles N hooks:
+`hookIndex++` hands out a distinct slot per call, and `renderComponent` resets the cursor to
+0 each render so the same calls land on the same slots again. This step is purely a **test
+that proves and guards that invariant** (and shows why the rules of hooks exist).
+
+**Runnable test** — add to `test/hooks.test.js`:
+
+```js
+test("multiple useState slots are independent", () => {
+  const root = newContainer();
+
+  function Form() {
+    const [a, setA] = useState("a0");
+    const [b, setB] = useState("b0");
+    return createElement(
+      "div",
+      null,
+      createElement("button", { id: "a", onClick: () => setA("a1") }, a),
+      createElement("button", { id: "b", onClick: () => setB("b1") }, b),
+    );
+  }
+
+  render(createElement(Form, null), root);
+  assert.equal(root.querySelector("#a").textContent, "a0");
+  assert.equal(root.querySelector("#b").textContent, "b0");
+
+  root.querySelector("#a").click();
+  assert.equal(root.querySelector("#a").textContent, "a1");
+  assert.equal(root.querySelector("#b").textContent, "b0"); // b stays put
+});
+```
+
+It should be green immediately. To *see* the rules-of-hooks failure mode firsthand,
+temporarily wrap the second `useState` in an `if` and watch the slots desync — the cursor
+points at the wrong slot on the next render.
+
+Next: **Step 4 — `useEffect`**, the first hook that needs new machinery: a pending-effects
+queue collected during render and flushed *after commit*, with deps comparison and
+cleanup-before-re-run.

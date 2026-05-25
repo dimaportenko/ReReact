@@ -41,3 +41,26 @@ test("setState re-renders the component in place", () => {
   button.click();
   assert.equal(button.textContent, "count: 2");
 });
+
+test("multiple useState slots are independent", () => {
+  const root = newContainer();
+
+  function Form() {
+    const [a, setA] = useState("a0");
+    const [b, setB] = useState("b0");
+    return createElement(
+      "div",
+      null,
+      createElement("button", { id: "a", onClick: () => setA("a1") }, a),
+      createElement("button", { id: "b", onClick: () => setB("b1") }, b),
+    );
+  }
+
+  render(createElement(Form, null), root);
+  assert.equal(root.querySelector("#a").textContent, "a0");
+  assert.equal(root.querySelector("#b").textContent, "b0");
+
+  root.querySelector("#a").click();
+  assert.equal(root.querySelector("#a").textContent, "a1");
+  assert.equal(root.querySelector("#b").textContent, "b0"); // b stays put
+});

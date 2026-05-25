@@ -7,14 +7,29 @@
 
     function Counter() {
       const [count, setCount] = useState(7);
+      const [isToggle, setIsToggle] = useState(false);
+
       return createElement(
         "div",
         null,
+        createElement("div", {
+          style: {
+            width: "100px",
+            height: "100px",
+            background: isToggle ? "azure" : "burlywood",
+            border: "1px solid brown",
+          },
+        }),
         createElement("p", null, count),
         createElement(
           "button",
           { onClick: () => setCount(count + 1) },
           "Click Me!",
+        ),
+        createElement(
+          "button",
+          { onClick: () => setIsToggle(!isToggle) },
+          "Toggle Bg",
         ),
       );
     }
