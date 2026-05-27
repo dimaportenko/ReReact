@@ -255,6 +255,112 @@ It should be green immediately. To *see* the rules-of-hooks failure mode firstha
 temporarily wrap the second `useState` in an `if` and watch the slots desync — the cursor
 points at the wrong slot on the next render.
 
-Next: **Step 4 — `useEffect`**, the first hook that needs new machinery: a pending-effects
-queue collected during render and flushed *after commit*, with deps comparison and
-cleanup-before-re-run.
+> **Status:** done — committed in `fb598e7` (16 tests green). Same commit extends the
+> `examples/hello` page to two hooks (count + background toggle).
+
+---
+
+## Step 4 — `useEffect`
+
+The first hook that needs genuinely new machinery. Two new ideas:
+
+1. **Effects run *after* commit**, not during render. So `useEffect` doesn't call your
+   function — it *queues* it, and we flush the queue once the DOM work for this pass is done.
+2. **Deps gating + cleanup.** Compare this render's deps to last render's; only re-run if they
+   changed, and run the previous cleanup *before* the re-run.
+
+**The "after commit" boundary:** the two things that kick off a commit are `render()` (root)
+and a `setState`. So those two flush the queue; `rerender` itself stays a pure "re-run +
+diff" mechanic (it can run nested inside a parent's pass, so it must *not* flush early).
+
+**Runnable test first** — add to `test/hooks.test.js` (and import `useEffect`):
+
+```js
+import { render, useState, useEffect } from "../src/dom/index.js"; // add useEffect
+
+test("useEffect runs after commit, re-runs on dep change, cleans up first", () => {
+  const root = newContainer();
+  const log = [];
+
+  function Box() {
+    const [n, setN] = useState(0);
+    useEffect(() => {
+      log.push(`run ${n}`);
+      return () => log.push(`cleanup ${n}`);
+    }, [n]);
+    return createElement("button", { onClick: () => setN(n + 1) }, `${n}`);
+  }
+
+  render(createElement(Box, null), root);
+  assert.deepEqual(log, ["run 0"]); // fired after mount
+
+  root.querySelector("button").click(); // n: 0 -> 1, dep changed
+  assert.deepEqual(log, ["run 0", "cleanup 0", "run 1"]); // cleanup before re-run
+});
+```
+
+**Minimal implementation** in `src/dom/index.js`.
+
+A module-level queue + flush (near the other globals):
+
+```js
+let pendingEffects = []; // effects collected this commit, flushed after DOM work
+
+function flushEffects() {
+  const effects = pendingEffects;
+  pendingEffects = []; // swap first, so an effect's setState can queue fresh ones
+  for (const run of effects) run();
+}
+```
+
+The hook:
+
+```js
+export function useEffect(fn, deps) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  const prev = instance.hooks[i];
+
+  const changed =
+    !prev ||                                       // first render
+    !deps ||                                       // no deps array -> every render
+    deps.some((d, j) => !Object.is(d, prev.deps[j]));
+
+  if (changed) {
+    pendingEffects.push(() => {
+      if (prev && prev.cleanup) prev.cleanup();    // cleanup before re-run
+      const cleanup = fn();
+      instance.hooks[i] = { deps, cleanup };       // remember for next compare
+    });
+  }
+}
+```
+
+Flush at the two commit boundaries — end of `render`:
+
+```js
+export function render(vnode, container) {
+  const next = normalize(vnode);
+  diff(container, next, container[ROOT] ?? null);
+  container[ROOT] = next;
+  flushEffects(); // add this
+}
+```
+
+…and right after `rerender` in the `setState` closure:
+
+```js
+    instance.hooks[i] = value;
+    rerender(instance);
+    flushEffects(); // setState is a commit boundary
+```
+
+Why it works: `useState` proved the cursor model; `useEffect` reuses the same
+`instance.hooks[i]` slot but stores `{ deps, cleanup }` instead of a value. The `prev` closure
+captures last render's record, so cleanup runs against the *old* values before the new effect
+overwrites the slot. Empty `[]` runs once (next render: `some` over an empty array is
+`false`); no deps array runs every render.
+
+**Scope note:** this covers mount / dep-change / cleanup-before-re-run. **Cleanup on
+*unmount*** (component removed from the tree) needs the reconciler to walk removed component
+vnodes and run their cleanups — that's **Step 5**, alongside `useRef` and `useMemo`.

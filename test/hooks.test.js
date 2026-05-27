@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { createElement } from "../src/runtime/index.js";
-import { render, useState } from "../src/dom/index.js";
+import { render, useState, useEffect } from "../src/dom/index.js";
 
 const newContainer = () =>
   new JSDOM("<!doctype html><body></body>").window.document.body;
@@ -63,4 +63,29 @@ test("multiple useState slots are independent", () => {
   root.querySelector("#a").click();
   assert.equal(root.querySelector("#a").textContent, "a1");
   assert.equal(root.querySelector("#b").textContent, "b0"); // b stays put
+});
+
+test("useEffect runs after commit, re-runs on dep change, cleans up first", () => {
+  const root = newContainer();
+  const log = [];
+
+  function Box() {
+    const [n, setN] = useState(0);
+
+    useEffect(() => {
+      log.push(`run ${n}`);
+
+      return () => {
+        log.push(`cleanup ${n}`);
+      };
+    }, [n]);
+
+    return createElement("button", { onClick: () => setN(n + 1) }, `${n}`);
+  }
+
+  render(createElement(Box, null), root);
+  assert.deepEqual(log, ["run 0"]);
+
+  root.querySelector("button").click();
+  assert.deepEqual(log, ["run 0", "cleanup 0", "run 1"]);
 });

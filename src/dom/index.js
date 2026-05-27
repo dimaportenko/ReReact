@@ -5,11 +5,20 @@ const ROOT = Symbol("rereact.root");
 
 let currentInstance = null;
 let hookIndex = 0;
+let pendingEffects = [];
+
+function flushEffects() {
+  const effects = pendingEffects;
+  pendingEffects = [];
+
+  for (const run of effects) run();
+}
 
 export function render(vnode, container) {
   const next = normalize(vnode);
   diff(container, next, container[ROOT] ?? null);
   container[ROOT] = next;
+  flushEffects();
 }
 
 function normalize(vnode) {
@@ -216,6 +225,29 @@ export function useState(initial) {
     }
     instance.hooks[i] = value;
     rerender(instance);
+    flushEffects();
   };
   return [instance.hooks[i], setState];
+}
+
+export function useEffect(fn, deps) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  const prev = instance.hooks[i];
+
+  const changed =
+    !prev ||
+    !deps ||
+    deps.some((dep, index) => !Object.is(dep, prev.deps[index]));
+
+  if (changed) {
+    pendingEffects.push(() => {
+      if (prev && prev.cleanup) {
+        prev.cleanup();
+      }
+
+      const cleanup = fn();
+      instance.hooks[i] = { deps, cleanup };
+    });
+  }
 }
