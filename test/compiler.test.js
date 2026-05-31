@@ -134,6 +134,49 @@ test("parses multiple attributes in order", () => {
   });
 });
 
+test("parses an open/close element with a text child", () => {
+  assert.deepEqual(parse(tokenize("<div>hi</div>")), {
+    type: "element",
+    tag: "div",
+    attributes: [],
+    children: [
+      {
+        type: "text",
+        value: "hi",
+      },
+    ],
+  });
+});
+
+test("parses nested element children (recursion)", () => {
+  assert.deepEqual(parse(tokenize("<ul><li>a</li><li>b</li></ul>")), {
+    type: "element",
+    tag: "ul",
+    attributes: [],
+    children: [
+      {
+        type: "element",
+        tag: "li",
+        attributes: [],
+        children: [{ type: "text", value: "a" }],
+      },
+      {
+        type: "element",
+        tag: "li",
+        attributes: [],
+        children: [{ type: "text", value: "b" }],
+      },
+    ],
+  });
+});
+
+test("a mismatched closing tag is a syntax error", () => {
+  assert.throws(
+    () => parse(tokenize("<div>hi</span>")),
+    /mismatch|closing|span|div/i,
+  );
+});
+
 test("a malformed tag is a syntax error", () => {
   assert.throws(() => parse(tokenize("<br/")), /expected/i);
 });

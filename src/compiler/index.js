@@ -92,7 +92,7 @@ export function parse(tokens) {
 
   const next = () => tokens[pos++];
 
-  const peek = () => tokens[pos];
+  const peek = (offset = 0) => tokens[pos + offset];
 
   function expect(type) {
     const token = next();
@@ -103,22 +103,72 @@ export function parse(tokens) {
     return token;
   }
 
-  expect("<");
-  const tag = expect("name").value;
+  function parseElement() {
+    expect("<");
+    const tag = expect("name").value;
 
-  // zero or more attributes, until we hit the closing "/"
-  const attributes = [];
-  while (peek() && peek().type === "name") {
-    const name = next().value;
-    expect("=");
-    const value = expect("string").value;
-    attributes.push({ name, value });
+    const attributes = [];
+    while (peek() && peek().type === "name") {
+      const name = next().value;
+      expect("=");
+      const value = expect("string").value;
+      attributes.push({ name, value });
+    }
+
+    if (peek() && peek().type === "/") {
+      expect("/");
+      expect(">");
+      return { type: "element", tag, attributes, children: [] };
+    }
+
+    expect(">");
+    const children = parseChildren(tag);
+    return { type: "element", tag, attributes, children };
   }
 
-  expect("/");
-  expect(">");
+  function parseChildren(parentTag) {
+    const children = [];
+    while (true) {
+      const token = peek();
+      if (!token) {
+        throw new SyntaxError(
+          `Unexpected end of input: <${parentTag}> was never closed`,
+        );
+      }
 
-  return { type: "element", tag, attributes, children: [] };
+      // a closing tag "< / name >" ends this child list - the 2 - token lookahead
+      if (token.type === "<" && peek(1) && peek(1).type === "/") {
+        expect("<");
+        expect("/");
+        const closeTag = expect("name").value;
+        expect(">");
+        if (closeTag !== parentTag) {
+          throw new SyntaxError(
+            `Msimatched closing tag: expected </${parentTag}> but found </${closeTag}>`,
+          );
+        }
+        return children;
+      }
+
+      // text child
+      if (token.type === "text") {
+        children.push({ type: "text", value: next().value });
+        continue;
+      }
+
+      // nexted element child - recurse
+      if (token.type === "<") {
+        children.push(parseElement());
+        continue;
+      }
+
+      throw new SyntaxError(
+        `Unexpected ${token.type} token in children of <${parentTag}>`,
+      );
+    }
+  }
+
+  return parseElement();
 }
 
 export function generate(node) {

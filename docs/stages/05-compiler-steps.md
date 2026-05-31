@@ -39,7 +39,7 @@ can read and run, instead of three big half-built stages that don't do anything 
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
    second mode (tag-mode vs text-mode). Split in three:
    - **5a.** Tokenizer: text-mode + closing tags (a `text` token). ✓ done
-   - **5b.** Parser: open/close elements with children (recursion). ← *next*
+   - **5b.** Parser: open/close elements with children (recursion). ← *this step*
    - **5c.** Codegen: children as trailing `createElement` args.
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
@@ -806,3 +806,187 @@ Two surgical changes to the tag-mode branches you already have:
 > `<` branch flips back *without* consuming the `<`. Whitespace-skip moved into tag-mode only.
 > (The stray `syncBuiltinESMExports` import — falsely claimed gone in 4b and this 5a message — was
 > actually removed in the follow-up commit `e0c2b91`.)
+
+---
+
+## Step 5b — Parser: open/close elements with children
+
+**Goal:** the parser stops only understanding self-closing tags. It now distinguishes `/>` (no
+children) from `>` (an open tag), and after an open tag parses a list of children — text nodes
+*and nested elements* — up to the matching `</tag>`, filling the `children` array that has sat
+empty since Step 2.
+
+### The crux
+
+This is the step where the grammar becomes **recursive**: an element can contain elements, which
+can contain elements, with no fixed depth. So the parsing function must **call itself** —
+`parseElement` parses one element, and to parse that element's children it calls `parseElement`
+again for each nested tag. The subtle part is that all those nested calls must share **one
+cursor**: there is a single `pos` walking the flat token array, and every level of recursion
+advances the same `pos`. We get that for free by making the helpers *nested functions that close
+over `pos`*, rather than passing an index around.
+
+The second new idea is **two-token lookahead**. Inside a child list, when you see a `<` you must
+decide: is this a *nested element* opening (`<li>…`) or *this element's closing tag* (`</ul>`)?
+The two are distinguished only by the *next* token — `name` vs `/`. So the parser peeks one token
+past the cursor to choose.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("parses an open/close element with a text child", () => {
+  assert.deepEqual(parse(tokenize("<div>hi</div>")), {
+    type: "element",
+    tag: "div",
+    attributes: [],
+    children: [{ type: "text", value: "hi" }],
+  });
+});
+
+test("self-closing element still parses with empty children", () => {
+  assert.deepEqual(parse(tokenize("<br/>")), {
+    type: "element",
+    tag: "br",
+    attributes: [],
+    children: [],
+  });
+});
+
+test("parses nested element children (recursion)", () => {
+  assert.deepEqual(parse(tokenize("<ul><li>a</li><li>b</li></ul>")), {
+    type: "element",
+    tag: "ul",
+    attributes: [],
+    children: [
+      { type: "element", tag: "li", attributes: [], children: [{ type: "text", value: "a" }] },
+      { type: "element", tag: "li", attributes: [], children: [{ type: "text", value: "b" }] },
+    ],
+  });
+});
+
+test("a mismatched closing tag is a syntax error", () => {
+  assert.throws(() => parse(tokenize("<div>hi</span>")), /mismatch|closing|span|div/i);
+});
+```
+
+The nested test is the one that proves recursion: a `ul` whose children are `li` elements, each
+with its own text child. Run `npm test`, watch the open/close and nested tests fail.
+
+### Minimal implementation
+
+Restructure `parse` so its body becomes nested helpers sharing the cursor. First, let `peek` take
+an offset so we can look ahead:
+
+```js
+  const peek = (offset = 0) => tokens[pos + offset];   // look ahead WITHOUT consuming
+```
+
+Then split the parsing into `parseElement` (one element) and `parseChildren` (a child list),
+and end `parse` by returning `parseElement()`:
+
+```js
+  function parseElement() {
+    expect("<");
+    const tag = expect("name").value;
+
+    const attributes = [];
+    while (peek() && peek().type === "name") {
+      const name = next().value;
+      expect("=");
+      const value = expect("string").value;
+      attributes.push({ name, value });
+    }
+
+    // self-closing: "/" ">" — no children
+    if (peek() && peek().type === "/") {
+      expect("/");
+      expect(">");
+      return { type: "element", tag, attributes, children: [] };
+    }
+
+    // open tag: ">" then children until the matching "</tag>"
+    expect(">");
+    const children = parseChildren(tag);
+    return { type: "element", tag, attributes, children };
+  }
+
+  function parseChildren(parentTag) {
+    const children = [];
+    while (true) {
+      const token = peek();
+      if (!token) {
+        throw new SyntaxError(`Unexpected end of input: <${parentTag}> was never closed`);
+      }
+
+      // a closing tag "< / name >" ends this child list — the 2-token lookahead
+      if (token.type === "<" && peek(1) && peek(1).type === "/") {
+        expect("<");
+        expect("/");
+        const closeTag = expect("name").value;
+        expect(">");
+        if (closeTag !== parentTag) {
+          throw new SyntaxError(
+            `Mismatched closing tag: expected </${parentTag}> but found </${closeTag}>`,
+          );
+        }
+        return children;
+      }
+
+      // text child
+      if (token.type === "text") {
+        children.push({ type: "text", value: next().value });
+        continue;
+      }
+
+      // nested element child — recurse
+      if (token.type === "<") {
+        children.push(parseElement());
+        continue;
+      }
+
+      throw new SyntaxError(`Unexpected ${token.type} token in children of <${parentTag}>`);
+    }
+  }
+
+  return parseElement();
+```
+
+### Why it works
+
+- **Recursion mirrors the data.** The grammar is "an element is `<tag> children </tag>`, and each
+  child may itself be an element." Code that recognizes a self-referential grammar is naturally
+  self-referential: `parseElement` → `parseChildren` → `parseElement`. The call stack at any
+  moment mirrors the tag nesting depth in the source — when you're three `parseElement` frames
+  deep, you're inside three nested tags.
+- **One cursor, shared by closure.** `pos`, `next`, `peek`, `expect` are all defined once in
+  `parse` and *captured* by the nested helpers. Every recursive `parseElement` call reads and
+  advances the **same** `pos`. If instead each call had its own index, the levels would re-parse
+  each other's tokens — the shared cursor is what makes the single left-to-right pass work across
+  arbitrary depth.
+- **Two-token lookahead resolves the only ambiguity.** At a `<` in a child list, one token isn't
+  enough to know what you're looking at; `peek(1)` tells you `/` (closing tag, stop) versus `name`
+  (nested element, recurse). This is the first time the parser needs to see *two* tokens to decide
+  — still no backtracking, just a wider window.
+- **The mismatch check turns a silent bug into a loud one.** Comparing `closeTag` to `parentTag`
+  catches `<div>…</span>`. Without it the parser would happily accept mis-nested tags and build a
+  structurally wrong tree that explodes later. The "never closed" guard does the same for input
+  that runs out before the close tag arrives.
+- **Self-closing is now just an early return.** The `peek().type === "/"` branch handles `<br/>`
+  before any child logic runs, so the Step 2 behaviour is preserved exactly — that's the
+  regression test staying green.
+
+### Scope note
+
+- **Codegen is untouched this step**, so `compile("<div>hi</div>")` still emits
+  `createElement("div", null)` — the children are *parsed* but not yet *emitted*. **Step 5c** makes
+  codegen walk `children` and append them as trailing `createElement` args. (Your existing
+  `compile` tests still pass because they only use self-closing tags.)
+- **Whitespace-only text nodes** (newlines/indentation between nested tags) will now appear in
+  `children` as `text` nodes of pure whitespace. The tests above avoid them by writing tags with
+  no gaps (`<ul><li>…`); deciding whether to trim them is a deliberate later call (5c or a
+  follow-up), not this step.
+- **Expression-container children** `{x}` are **Step 6**; **fragments** `<>…</>` are **Step 7**.
+
+> **Status:** _pending — refactor `parse` into recursive helpers, then run `npm test` and hand off to `lbb:commit`._
