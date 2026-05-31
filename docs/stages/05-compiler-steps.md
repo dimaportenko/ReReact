@@ -1095,7 +1095,7 @@ In `generate`, after computing `type` and `props`, render the children and assem
   *unquoted* (an identifier, not a string), which is exactly why they need their own step.
 - **Fragments** (`<>…</>`) are **Step 7**; **spread props** **Step 8**.
 
-> **Status:** done — committed in `5cc0fb1` (44 tests green, was 40). `generate` now maps
+> **Status:** done — committed in `59b56db` (43 tests green, was 40). `generate` now maps
 > `node.children` into trailing args — text → `JSON.stringify` literal, element → recursive
 > `generate` call — and emits `[type, props, ...children].join(", ")`, so a childless element
 > stays `createElement("br", null)` with no trailing comma. **Step 5 complete: a nested JSX tree
