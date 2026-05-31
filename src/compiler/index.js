@@ -1,5 +1,3 @@
-import { syncBuiltinESMExports } from "node:module";
-
 const isNameStart = (c) => /[A-Za-z_]/.test(c);
 const isNamePart = (c) => /[A-Za-z0-9_-]/.test(c);
 
