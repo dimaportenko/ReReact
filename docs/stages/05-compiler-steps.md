@@ -37,11 +37,11 @@ can read and run, instead of three big half-built stages that don't do anything 
    - **4a.** Tokenizer learns `=` and quoted strings (and `-` in names for `data-*`). ✓ done
    - **4b.** Parser grows a `peek`-driven attribute loop; codegen emits a props object. ✓ done
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
-   second mode (tag-mode vs text-mode). Split in three:
+   second mode (tag-mode vs text-mode). Split in three (✓ all done):
    - **5a.** Tokenizer: text-mode + closing tags (a `text` token). ✓ done
    - **5b.** Parser: open/close elements with children (recursion). ✓ done
-   - **5c.** Codegen: children as trailing `createElement` args. ← *next*
-6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
+   - **5c.** Codegen: children as trailing `createElement` args. ✓ done
+6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children. ← *next*
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
 8. **Spread attributes.** `<div {...rest}/>`.
 9. **Wiring.** A `.jsx` → `.js` transform (CLI or import hook); run an example through it
@@ -1095,4 +1095,8 @@ In `generate`, after computing `type` and `props`, render the children and assem
   *unquoted* (an identifier, not a string), which is exactly why they need their own step.
 - **Fragments** (`<>…</>`) are **Step 7**; **spread props** **Step 8**.
 
-> **Status:** _pending — extend `generate` to walk children, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `5cc0fb1` (44 tests green, was 40). `generate` now maps
+> `node.children` into trailing args — text → `JSON.stringify` literal, element → recursive
+> `generate` call — and emits `[type, props, ...children].join(", ")`, so a childless element
+> stays `createElement("br", null)` with no trailing comma. **Step 5 complete: a nested JSX tree
+> compiles end to end to runnable `createElement` calls.**
