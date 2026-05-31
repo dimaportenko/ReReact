@@ -1,5 +1,5 @@
 ---
-name: suggest-next-step
+name: next
 description: >-
   Suggest the next increment of work in a learn-by-building project as a small,
   test-first step — a runnable test first, then a minimal implementation sketch
@@ -15,7 +15,7 @@ description: >-
   wants you to write the code.
 ---
 
-# Suggest the next step (learn-by-building)
+# lbb:next — suggest the next step (learn-by-building)
 
 This skill is for projects where the **point is the learning, not the shipping** — the
 user is rebuilding something from scratch (a framework, a database, a compiler, a parser)
@@ -26,6 +26,10 @@ The single most important thing to internalize: **the learning happens in the wr
 If you write the implementation, you do the learning and they don't. So you suggest,
 explain, and review — and you hand them a step small enough to write themselves and a test
 concrete enough to know when they got it right.
+
+This is the `next` half of the **`lbb` (learning-by-building)** skill set. Its companion,
+[[commit]] (`lbb:commit`), validates a finished step and commits it. `lbb:next` proposes
+work; `lbb:commit` closes it out.
 
 ## When this applies
 
@@ -120,7 +124,7 @@ durable trail of the methodology, not just chat scrollback. Mechanics:
   the doc with a short blockquote noting the commit and test count, e.g.
   `> **Status:** done — committed in `abc1234` (18 tests green).` This turns the doc into a
   build log the learner can re-read later and see *how* it was built, which is the deliverable
-  in a learning project.
+  in a learning project. (`lbb:commit` writes this marker for you when it commits a step.)
 - Keep the doc under control: one topic per doc, newest step appended at the bottom, the
   step plan near the top updated as steps complete.
 
@@ -129,22 +133,23 @@ durable trail of the methodology, not just chat scrollback. Mechanics:
 Most sessions settle into this rhythm. Recognize where the user is and pick up there:
 
 1. **Suggest** the next step (test → minimal code → why), in chat and appended to the doc.
+   *(this skill, `lbb:next`)*
 2. **User implements** by hand. Wait for them.
-3. **Validate** when they ask: read the files they changed, run the test suite, confirm the
-   new test passes and nothing regressed. If a test fails, **diagnose** it — point at the
-   root cause and explain it; don't silently fix their code. (A misread variable, an
-   assignment-vs-comparison typo, an off-by-one in a cursor — name it and let them fix it.)
-4. **Commit & push** only when they ask, following the repo's commit conventions (message
-   style, any required trailer). Report the resulting commit hash.
-5. **Record** the done-status in the doc (commit hash + test count), then **write the next
-   step** into the doc when they ask for it. Back to 1.
+3. **Validate, commit & record** when they ask — hand off to [[commit]] (`lbb:commit`),
+   which reads the changed files, runs the suite, confirms the new test passes and nothing
+   regressed, commits + pushes following repo conventions, and writes the done-status
+   marker (commit hash + test count) back into the steps doc. If a test fails it diagnoses
+   the root cause and does **not** commit or silently fix the learner's code.
+4. **Record** is handled by `lbb:commit`; then the user asks for the next step and you're
+   back to 1.
 
-Adapt freely — if they only want validation, just validate; if they only want the next step
-written, just write it. The loop is a default, not a script.
+Adapt freely — if they only want validation, route to `lbb:commit`; if they only want the
+next step written, just write it. The loop is a default, not a script.
 
 ## Reviewing the user's implementation
 
-When validating, you're a careful reviewer, not a rubber stamp:
+When validating (whether here or in `lbb:commit`), you're a careful reviewer, not a rubber
+stamp:
 
 - Run the actual test suite; report real pass/fail counts, don't assert "looks good" without
   running it.
