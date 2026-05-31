@@ -32,9 +32,10 @@ can read and run, instead of three big half-built stages that don't do anything 
    into tokens. ✓ done
 2. **Parser: the simplest element.** Tokens → an AST node `{ type:"element", tag, attributes:[], children:[] }` for `<br/>`. ✓ done
 3. **Codegen: emit `createElement`.** AST → the string `createElement("br", null)`. First
-   end-to-end compile. ← *this step*
-4. **Attributes.** `id="x"` and boolean shorthand → a props object. Tokenizer learns `=` and
-   quoted strings.
+   end-to-end compile. ✓ done
+4. **Attributes.** `id="x"` and boolean shorthand → a props object. Split in two:
+   - **4a.** Tokenizer learns `=` and quoted strings (and `-` in names for `data-*`). ← *next*
+   - **4b.** Parser grows a `peek`-driven attribute loop; codegen emits a props object.
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
    second mode (tag-mode vs text-mode).
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
@@ -370,4 +371,132 @@ Two deferrals worth naming so they don't feel missing:
   a props object) and **Step 5** (children become trailing arguments). `Fragment` as the
   emitted type arrives in **Step 7**.
 
-> **Status:** _pending — implement `generate`, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `84dadd5` (28 tests green, was 26). `generate(node)` renders
+> the AST node as a `createElement(...)` call string: `JSON.stringify(node.tag)` for the quoted
+> tag, literal text `"null"` for the no-props slot. The `compile = generate∘parse∘tokenize`
+> helper makes the first full pipeline pass green — `"<br/>"` → `'createElement("br", null)'`.
+> **Milestone: Steps 1–3 done — the first end-to-end compile of the simplest element.**
+
+---
+
+## Step 4a — Tokenizer: `=` and quoted strings
+
+**Goal:** teach `tokenize` the two new lexical shapes an attribute needs — the `=` sign and a
+double-quoted string value — so that `<div id="x"/>` scans into a token stream the parser can
+later read. No parsing or codegen yet; this step ends at the token array.
+
+The crux: a **quoted string is the first token whose boundaries are content-defined, not
+character-class-defined.** A name ends when the next char isn't a name-char; a string ends only
+at the *matching closing quote* — the spaces, digits, and punctuation in between are all part of
+the value, not delimiters. So unlike every token so far, you consume the opening `"`, then read
+*everything* until you see the closing `"`, regardless of what those characters are.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("tokenizes an attribute: name = quoted-string", () => {
+  assert.deepEqual(tokenize('<div id="x"/>'), [
+    { type: "<" },
+    { type: "name", value: "div" },
+    { type: "name", value: "id" },
+    { type: "=" },
+    { type: "string", value: "x" },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+
+test("a string value can contain spaces and punctuation", () => {
+  // inside the quotes, nothing is a delimiter except the closing quote
+  assert.deepEqual(tokenize('<a href="/a b?c"/>'), [
+    { type: "<" },
+    { type: "name", value: "a" },
+    { type: "name", value: "href" },
+    { type: "=" },
+    { type: "string", value: "/a b?c" },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+
+test("a name can contain a hyphen (data-* attributes)", () => {
+  assert.deepEqual(tokenize("<div data-id/>"), [
+    { type: "<" },
+    { type: "name", value: "div" },
+    { type: "name", value: "data-id" },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+
+test("an unterminated string is a syntax error", () => {
+  assert.throws(() => tokenize('<div id="x/>'), /unterminated|string/i);
+});
+```
+
+The second test is the one that matters: `"/a b?c"` contains `/`, a space, and `?` — characters
+that are *structural* or *illegal* outside quotes — yet they all land inside one `string` token.
+Run `npm test`, watch the new ones fail, then extend the tokenizer.
+
+### Minimal implementation
+
+Two changes in `src/compiler/index.js`.
+
+First, re-add `-` to the name-part class (top of the file) so `data-id` scans as one name:
+
+```js
+const isNamePart = (c) => /[A-Za-z0-9_-]/.test(c);
+```
+
+Then add two branches inside the `tokenize` loop, alongside the existing punctuation branches:
+
+```js
+    // the equals sign that ties an attribute name to its value
+    if (c === "=") { tokens.push({ type: "=" }); i++; continue; }
+
+    // a quoted string value: consume from after the opening quote up to the
+    // matching closing quote. Everything between is literal content.
+    if (c === '"') {
+      i++;                       // step over the opening quote
+      const start = i;
+      while (i < input.length && input[i] !== '"') i++;
+      if (i >= input.length) {
+        throw new SyntaxError(`Unterminated string starting at index ${start - 1}`);
+      }
+      tokens.push({ type: "string", value: input.slice(start, i) });
+      i++;                       // step over the closing quote
+      continue;
+    }
+```
+
+### Why it works
+
+- **The string scanner inverts the name scanner's logic.** A name loops *while* the char is a
+  name-char (a positive class); a string loops *until* it hits the one terminator, accepting
+  everything else. That's why structural characters like `/` and `?` survive inside the
+  quotes — the loop's only exit condition is `input[i] === '"'`, so nothing else can end it.
+- **`start` points *after* the opening quote, and we slice before the closing one.** The quotes
+  are delimiters, not data: `input.slice(start, i)` captures exactly the characters between them.
+  The two `i++`s (over the opening and closing quotes) are what keep the cursor from ever
+  re-reading a quote as the start of a second, empty string.
+- **The unterminated-string `throw` is the loud-failure principle again.** If the closing quote
+  is missing, the inner loop runs off the end of the input. Without the guard you'd silently emit
+  a string token containing the entire rest of the file — a bug that surfaces confusingly three
+  stages later. The `i >= input.length` check turns that into an immediate, located error.
+- **`-` rejoins `isNamePart` but not `isNameStart`.** A name still can't *begin* with a hyphen
+  (that would be ambiguous with other syntax), but may contain one — exactly the rule HTML uses
+  for `data-id`, `aria-label`, and friends. (`.` for member-expression component tags like
+  `Foo.Bar` is still deferred; it has no test yet.)
+
+### Scope note
+
+This step stops at tokens. The parser still only understands `<` name `/` `>`, so feeding it
+`<div id="x"/>` will *still* fail at the `expect("/")` after the tag name — that's expected and
+gets fixed in **4b**, where the parser grows an attribute loop and codegen emits a props object.
+Boolean-shorthand attributes (`<input disabled/>` → `{ disabled: true }`) and single-quoted
+strings are also 4b/later concerns; this step only adds the two lexical shapes. Expression-valued
+attributes (`id={x}`) wait for **Step 6** (`{ ... }` containers).
+
+> **Status:** _pending — extend `tokenize`, then run `npm test` and hand off to `lbb:commit`._

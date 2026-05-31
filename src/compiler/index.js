@@ -1,5 +1,7 @@
+import { syncBuiltinESMExports } from "node:module";
+
 const isNameStart = (c) => /[A-Za-z_]/.test(c);
-const isNamePart = (c) => /[A-Za-z0-9_]/.test(c);
+const isNamePart = (c) => /[A-Za-z0-9_-]/.test(c);
 
 export function tokenize(input) {
   const tokens = [];
@@ -23,8 +25,32 @@ export function tokenize(input) {
       i++;
       continue;
     }
+    if (c === "=") {
+      tokens.push({ type: "=" });
+      i++;
+      continue;
+    }
 
     if (/\s/.test(c)) {
+      i++;
+      continue;
+    }
+
+    if (c === '"') {
+      i++;
+      const start = i;
+
+      while (i < input.length && input[i] !== '"') {
+        i++;
+      }
+
+      if (i >= input.length) {
+        throw new SyntaxError(
+          `Unterminated string starting at index ${start - 1}`,
+        );
+      }
+
+      tokens.push({ type: "string", value: input.slice(start, i) });
       i++;
       continue;
     }

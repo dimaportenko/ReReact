@@ -31,6 +31,44 @@ test("a multi-character tag name scans as one name token", () => {
   ]);
 });
 
+test("tokenizes an attribute: name = quoted-string", () => {
+  assert.deepEqual(tokenize('<div id="x" />'), [
+    { type: "<" },
+    { type: "name", value: "div" },
+    { type: "name", value: "id" },
+    { type: "=" },
+    { type: "string", value: "x" },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+
+test("a string value can contain spaces and punctuation", () => {
+  assert.deepEqual(tokenize('<a href="/a b?c" />'), [
+    { type: "<" },
+    { type: "name", value: "a" },
+    { type: "name", value: "href" },
+    { type: "=" },
+    { type: "string", value: "/a b?c" },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+
+test("a name can contain a hyphen (data-* attributes)", () => {
+  assert.deepEqual(tokenize("<div data-id/>"), [
+    { type: "<" },
+    { type: "name", value: "div" },
+    { type: "name", value: "data-id" },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+
+test("an unterminated string is a syntax error", () => {
+  assert.throws(() => tokenize('<div id="x/>'), /unterminated|string/i);
+});
+
 test("parses a self-closing tag into an element node", () => {
   assert.deepEqual(parse(tokenize("<br/>")), {
     type: "element",
