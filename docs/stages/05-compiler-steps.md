@@ -1259,7 +1259,7 @@ so `hi {x}` in `<p>hi {x}</p>` emits `text("hi ")` then `expr("x")` instead of s
 - **Empty containers** `{}` and **whitespace-only** `{ }` will tokenize as `expr` with an empty/
   blank value; whether to reject those is a parser-level decision for 6b, not here.
 
-> **Status:** done — committed in `9a0e9f9` (47 tests green, was 43). A `{` branch in `tokenize`
+> **Status:** done — committed in `0117535` (47 tests green, was 43). A `{` branch in `tokenize`
 > copies up to the matching `}` into one opaque `expr` token via depth counting, so nested braces
 > (`{ {id: 1} }`) don't end it early; an unterminated expression throws. The branch sits before
 > the text-mode block so it fires in both modes, and the text scanner now also stops at `{`. Mode
