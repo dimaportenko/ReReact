@@ -65,6 +65,32 @@ test("a name can contain a hyphen (data-* attributes)", () => {
   ]);
 });
 
+test("tokenize an element with a text child", () => {
+  assert.deepEqual(tokenize("<div>hi</div>"), [
+    { type: "<" },
+    { type: "name", value: "div" },
+    { type: ">" },
+    { type: "text", value: "hi" },
+    { type: "<" },
+    { type: "/" },
+    { type: "name", value: "div" },
+    { type: ">" },
+  ]);
+});
+
+test("text content preserves internal whitespace", () => {
+  assert.deepEqual(tokenize("<p>hi there</p>"), [
+    { type: "<" },
+    { type: "name", value: "p" },
+    { type: ">" },
+    { type: "text", value: "hi there" },
+    { type: "<" },
+    { type: "/" },
+    { type: "name", value: "p" },
+    { type: ">" },
+  ]);
+});
+
 test("an unterminated string is a syntax error", () => {
   assert.throws(() => tokenize('<div id="x/>'), /unterminated|string/i);
 });

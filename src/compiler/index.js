@@ -6,9 +6,24 @@ const isNamePart = (c) => /[A-Za-z0-9_-]/.test(c);
 export function tokenize(input) {
   const tokens = [];
   let i = 0; // cursor: index of the next unread character
+  let mode = "tag";
 
   while (i < input.length) {
     const c = input[i];
+
+    if (mode === "text") {
+      if (c === "<") {
+        mode = "tag";
+        continue;
+      }
+
+      const start = i;
+      while (i < input.length && input[i] !== "<") {
+        i++;
+      }
+      tokens.push({ type: "text", value: input.slice(start, i) });
+      continue;
+    }
 
     if (c === "<") {
       tokens.push({ type: "<" });
@@ -18,6 +33,7 @@ export function tokenize(input) {
     if (c === ">") {
       tokens.push({ type: ">" });
       i++;
+      mode = "text";
       continue;
     }
     if (c === "/") {

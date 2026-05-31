@@ -35,9 +35,12 @@ can read and run, instead of three big half-built stages that don't do anything 
    end-to-end compile. ✓ done
 4. **Attributes.** `id="x"` and boolean shorthand → a props object. Split in two:
    - **4a.** Tokenizer learns `=` and quoted strings (and `-` in names for `data-*`). ✓ done
-   - **4b.** Parser grows a `peek`-driven attribute loop; codegen emits a props object. ← *next*
+   - **4b.** Parser grows a `peek`-driven attribute loop; codegen emits a props object. ✓ done
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
-   second mode (tag-mode vs text-mode).
+   second mode (tag-mode vs text-mode). Split in three:
+   - **5a.** Tokenizer: text-mode + closing tags (a `text` token). ← *next*
+   - **5b.** Parser: open/close elements with children (recursion).
+   - **5c.** Codegen: children as trailing `createElement` args.
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
 8. **Spread attributes.** `<div {...rest}/>`.
@@ -629,4 +632,172 @@ A judgment call baked into the test: it asserts `{ "id": "x" }` — keys quoted,
 keys are chosen because they're *correct for any attribute name* (including `data-id`, not a valid
 bare key) and dead simple. Emitting bare keys where legal is a worthwhile later variation.
 
-> **Status:** _pending — implement the parser loop + codegen, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `1463856` (35 tests green, was 32). The parser grew its first
+> variable-length rule — a `peek()`-driven `while` loop reading zero-or-more `name = string`
+> attributes before the closing `/>`. Codegen maps the `attributes` array to a props object
+> literal (`JSON.stringify` on both key and value), and the empty case still emits `null`, so
+> `<br/>` is unchanged. NOTE: the stray 4a import (`syncBuiltinESMExports`) was *not* removed in
+> this commit despite the commit message saying so — cleanup pending in a follow-up.
+
+---
+
+## Step 5 — Children & text (a new topic)
+
+This is the biggest step in the stage, so it opens a sub-topic of its own and splits into
+pieces, just like Step 4 did.
+
+### The crux
+
+Every input so far has been *tag-internal* — the world between `<` and `>`, where whitespace is
+noise and only grammar characters appear. That's why the tokenizer could **skip all whitespace
+globally**. But `<div>hi there</div>` has a second world: the **text content between tags**,
+where the space in `hi there` is *significant data*, and arbitrary characters (`hi there!?`) are
+legal. The tokenizer can no longer treat the whole input the same way — it needs to know *where
+it is*: inside a tag (tag-mode) or in the text between tags (text-mode). That mode switch is the
+hard, new idea; everything else (recursion, matching close tags) follows from it.
+
+The mode boundary is exactly the two characters that delimit tags:
+- seeing `>` ends a tag → switch to **text-mode**
+- seeing `<` ends text → switch back to **tag-mode**
+
+### Sub-step plan
+
+- **5a. Tokenizer: text-mode + closing tags.** `<div>hi</div>` →
+  `[<, name(div), >, text("hi"), <, /, name(div), >]`. The scanner gains a mode and a `text`
+  token; closing tags reuse the existing `<`, `/`, `name`, `>` tokens. ← *next*
+- **5b. Parser: open/close elements with children.** Distinguish a self-closing `/>` from an
+  open tag `>`; after an open tag, parse children (text nodes + nested elements, recursively)
+  until the matching `</tag>`. The element node's `children` array finally fills.
+- **5c. Codegen: children as trailing args.** `createElement("div", null, "hi")` — append each
+  child after the props argument; text children become quoted strings, element children recurse
+  through `generate`.
+
+---
+
+## Step 5a — Tokenizer: text-mode and closing tags
+
+**Goal:** `tokenize("<div>hi</div>")` produces the full token stream including a `text` token for
+the content and the four tokens of the closing tag. The scanner stops skipping whitespace
+unconditionally and instead tracks which mode it's in.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("tokenizes an element with a text child", () => {
+  assert.deepEqual(tokenize("<div>hi</div>"), [
+    { type: "<" },
+    { type: "name", value: "div" },
+    { type: ">" },
+    { type: "text", value: "hi" },
+    { type: "<" },
+    { type: "/" },
+    { type: "name", value: "div" },
+    { type: ">" },
+  ]);
+});
+
+test("text content preserves internal whitespace", () => {
+  // the space in "hi there" is data, not a token separator
+  assert.deepEqual(tokenize("<p>hi there</p>"), [
+    { type: "<" },
+    { type: "name", value: "p" },
+    { type: ">" },
+    { type: "text", value: "hi there" },
+    { type: "<" },
+    { type: "/" },
+    { type: "name", value: "p" },
+    { type: ">" },
+  ]);
+});
+
+test("self-closing tags still tokenize as before (no text token)", () => {
+  assert.deepEqual(tokenize("<br/>"), [
+    { type: "<" },
+    { type: "name", value: "br" },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+```
+
+The second test is the point of the whole step: `"hi there"` must come back as **one** `text`
+token with its space intact — proof the global whitespace-skip no longer applies in text-mode.
+Run `npm test`, watch the first two fail.
+
+### Minimal implementation
+
+The tokenizer gains a single piece of state — the current mode — and the main loop branches on
+it. Sketch (restructure your existing `tokenize`; don't just bolt this on):
+
+```js
+export function tokenize(input) {
+  const tokens = [];
+  let i = 0;
+  let mode = "tag"; // "tag" inside <...>, "text" between tags
+
+  while (i < input.length) {
+    const c = input[i];
+
+    if (mode === "text") {
+      // text runs until the next "<". Everything up to it is one text token.
+      if (c === "<") { mode = "tag"; continue; } // don't consume "<"; let tag-mode see it
+      const start = i;
+      while (i < input.length && input[i] !== "<") i++;
+      tokens.push({ type: "text", value: input.slice(start, i) });
+      continue;
+    }
+
+    // --- tag-mode: the rules you already have ---
+    if (c === "<") { tokens.push({ type: "<" }); i++; continue; }
+    if (c === ">") { tokens.push({ type: ">" }); i++; mode = "text"; continue; } // ">" opens text
+    if (c === "/") { tokens.push({ type: "/" }); i++; continue; }
+    if (c === "=") { tokens.push({ type: "=" }); i++; continue; }
+    if (/\s/.test(c)) { i++; continue; }            // whitespace skip — tag-mode ONLY now
+    if (c === '"') { /* ...unchanged string scanner... */ }
+    if (isNameStart(c)) { /* ...unchanged name scanner... */ }
+
+    throw new SyntaxError(`Unexpected character ${JSON.stringify(c)} at index ${i}`);
+  }
+
+  return tokens;
+}
+```
+
+Two surgical changes to the tag-mode branches you already have:
+1. the `>` branch sets `mode = "text"` after pushing its token;
+2. the whitespace-skip now lives *only* in tag-mode (it moved inside the tag-mode block, after the
+   text-mode `if`), so it can never eat significant text.
+
+### Why it works
+
+- **One bit of state changes everything.** `mode` is the whole feature. The same character means
+  different things depending on it: in tag-mode `h` starts a name; in text-mode `h` starts text.
+  A tokenizer with modes is the standard answer to "the same input has regions with different
+  lexical rules" — HTML, template languages, and string interpolation all work this way.
+- **The mode flips on `>` and `<`, the natural tag delimiters.** Pushing `>` means a tag just
+  closed, so what follows is content → `mode = "text"`. In text-mode, hitting `<` means content
+  ended and a tag is starting → flip back. Crucially the text-mode branch **doesn't consume** the
+  `<` (no `i++` before `continue`) — it just changes mode and loops, letting the tag-mode `<`
+  branch emit the token. One character, one owner.
+- **Text scanning mirrors the string scanner from 4a.** Loop *until* the terminator (`<`),
+  accepting everything else — so the space in `hi there` is captured, not skipped. The difference
+  from a quoted string is only the terminator (`<` vs `"`) and that there are no surrounding
+  delimiters to step over.
+- **Self-closing tags are unaffected** because `<br/>` never emits a `>` until the very end, so
+  the scanner stays in tag-mode the whole time and `mode = "text"` only trips as the input ends.
+  That's why the third (regression) test still passes untouched.
+
+### Scope note
+
+- **5a stops at tokens.** The parser still only understands self-closing tags, so feeding it
+  `<div>hi</div>` will fail at `expect("/")` — fixed in **5b**, where open tags and child parsing
+  arrive.
+- **Whitespace-only text** (the newlines/indentation between nested tags, e.g.
+  `<ul>\n  <li/>\n</ul>`) will tokenize into `text` tokens that are pure whitespace. Real JSX
+  trims/drops these; we'll decide how to handle them in 5b or a dedicated follow-up — not now.
+- **Expression containers** `{x}` inside children are **Step 6**; they're a *third* lexical
+  context and get their own mode handling there.
+
+> **Status:** _pending — restructure `tokenize` with a mode, then run `npm test` and hand off to `lbb:commit`._
