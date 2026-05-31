@@ -68,3 +68,12 @@ export function parse(tokens) {
 
   return { type: "element", tag, attributes: [], children: [] };
 }
+
+export function generate(node) {
+  const type = JSON.stringify(node.tag);
+
+  // No attributes yet
+  const props = "null";
+
+  return `createElement(${type}, ${props})`;
+}

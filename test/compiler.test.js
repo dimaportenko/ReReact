@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { tokenize, parse } from "../src/compiler/index.js";
+import { tokenize, parse, generate } from "../src/compiler/index.js";
+
+const compile = (src) => generate(parse(tokenize(src)));
 
 test("tokenizes a self-closing tag", () => {
   assert.deepEqual(tokenize("<br/>"), [
@@ -49,4 +51,12 @@ test("parses a multi-character tag name", () => {
 
 test("a malformed tag is a syntax error", () => {
   assert.throws(() => parse(tokenize("<br/")), /expected/i);
+});
+
+test("compiles a self-closing tag to a createElement call", () => {
+  assert.equal(compile("<br/>"), 'createElement("br", null)');
+});
+
+test("the tag name is emitted as a quoted string literal", () => {
+  assert.equal(compile("<section />"), 'createElement("section", null)');
 });

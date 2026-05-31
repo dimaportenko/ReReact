@@ -30,9 +30,9 @@ can read and run, instead of three big half-built stages that don't do anything 
 
 1. **Tokenizer: structural tokens.** Turn `<br/>` into `[<, name, /, >]`. Scanning a string
    into tokens. ✓ done
-2. **Parser: the simplest element.** Tokens → an AST node `{ type:"element", tag, attributes:[], children:[] }` for `<br/>`. ← *this step*
+2. **Parser: the simplest element.** Tokens → an AST node `{ type:"element", tag, attributes:[], children:[] }` for `<br/>`. ✓ done
 3. **Codegen: emit `createElement`.** AST → the string `createElement("br", null)`. First
-   end-to-end compile.
+   end-to-end compile. ← *this step*
 4. **Attributes.** `id="x"` and boolean shorthand → a props object. Tokenizer learns `=` and
    quoted strings.
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
@@ -274,4 +274,100 @@ absent). This parser also doesn't yet check for **leftover tokens** after the fi
 single top-level element there aren't any, but once nesting and siblings appear we'll add a
 "consumed everything?" assertion. Don't add it now; it has no failing test to justify it yet.
 
-> **Status:** _pending — implement `parse`, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `0c58fd8` (26 tests green, was 23). `parse(tokens)` walks
+> the token array with one non-backtracking cursor; `expect(type)` makes the grammar
+> `element := "<" name "/" ">"` executable, and running off the end of the array surfaces a
+> missing `>` as a `SyntaxError`. `attributes`/`children` are empty placeholders until Steps 4–5.
+
+---
+
+## Step 3 — Codegen: emit `createElement`
+
+**Goal:** a `generate(node)` that turns the AST node from Step 2 into a **string of
+JavaScript source** — a `createElement(...)` call. With this step the three stages connect
+end to end for the first time: `"<br/>"` → tokens → AST → `'createElement("br", null)'`.
+
+The crux of codegen is that **it's the inverse of parsing**. The parser read text and built
+structure; codegen reads structure and writes text back out — but emits *JavaScript* (a
+`createElement` call) instead of the *JSX* we started with. That round-trip, JSX-source →
+JS-source, is the entire job of the compiler, and after this step you can watch it happen.
+
+### Test first
+
+Append to `test/compiler.test.js` (add `generate` to the existing import):
+
+```js
+import { tokenize, parse, generate } from "../src/compiler/index.js";
+
+// the whole pipeline, composed — this is "the compiler" in miniature
+const compile = (src) => generate(parse(tokenize(src)));
+
+test("compiles a self-closing tag to a createElement call", () => {
+  assert.equal(compile("<br/>"), 'createElement("br", null)');
+});
+
+test("the tag name is emitted as a quoted string literal", () => {
+  assert.equal(compile("<section/>"), 'createElement("section", null)');
+});
+```
+
+Note `assert.equal` (string comparison) rather than `deepEqual` — codegen's output is a
+string, not a structure. Run `npm test`, watch it fail (`generate` isn't exported), then
+write it.
+
+### Minimal implementation
+
+Add to `src/compiler/index.js`:
+
+```js
+// Codegen: turn an AST node back into source text — but JS, not JSX.
+// For now the only node is a host element with no attributes and no children.
+
+export function generate(node) {
+  // A host element's type is the tag name as a JS *string literal*.
+  // JSON.stringify does exactly that: "br" → the 4-character text  "br"
+  // (quotes included), and it escapes anything weird for free.
+  const type = JSON.stringify(node.tag);
+
+  // No attributes yet, so props is React's no-props convention: literal null.
+  // Note this is the STRING "null" — we're emitting source code, so everything
+  // generate() returns is text destined to be written into a .js file.
+  const props = "null";
+
+  return `createElement(${type}, ${props})`;
+}
+```
+
+### Why it works
+
+- **Codegen mirrors the parser, run backwards.** `parse` consumed `<`, a name, `/`, `>` and
+  produced `{ tag: "br" }`; `generate` consumes `{ tag: "br" }` and produces the call text.
+  Structure in, text out — the exact inverse of Step 2.
+- **`JSON.stringify(node.tag)` is the quoting trick.** We need the tag to appear in the
+  output *as a quoted string* — `"br"`, with the quote characters — because in
+  `createElement("br", null)` the first argument is a JS string literal. `JSON.stringify`
+  turns the value `br` into the source text `"br"` and handles escaping, so we never
+  hand-concatenate quotes.
+- **`props` is the string `"null"`, not the value `null`.** This is the mental gear-shift of
+  codegen: we are not *calling* `createElement`, we are *writing out the text of a call* for
+  some future `.js` file to run. Every piece we assemble is a string. The runtime accepts
+  `null` for no-props (`{ ...null }` is `{}`), so emitting literal `null` is the faithful
+  no-attributes form.
+- **End to end at last.** The `compile` helper chains `tokenize → parse → generate` — the
+  whole compiler in three function calls. Every later step just *widens* one of these three
+  stages (props, children, fragments); the pipeline shape is now fixed and won't change.
+
+### Scope note
+
+Two deferrals worth naming so they don't feel missing:
+
+- **Host vs. component.** A capitalized tag like `<App/>` must compile to
+  `createElement(App, null)` — a bare **identifier**, not the string `"App"` — because that's
+  how the runtime tells a component (a function) from a host element (a tag name string). We
+  quote *every* tag for now; the lowercase-is-host / Capitalized-is-component branch is a
+  small later addition (it folds naturally into Step 4 or a micro-step of its own).
+- **`null` props and no children** hold only until **Step 4** (attributes replace `null` with
+  a props object) and **Step 5** (children become trailing arguments). `Fragment` as the
+  emitted type arrives in **Step 7**.
+
+> **Status:** _pending — implement `generate`, then run `npm test` and hand off to `lbb:commit`._
