@@ -34,8 +34,8 @@ can read and run, instead of three big half-built stages that don't do anything 
 3. **Codegen: emit `createElement`.** AST → the string `createElement("br", null)`. First
    end-to-end compile. ✓ done
 4. **Attributes.** `id="x"` and boolean shorthand → a props object. Split in two:
-   - **4a.** Tokenizer learns `=` and quoted strings (and `-` in names for `data-*`). ← *next*
-   - **4b.** Parser grows a `peek`-driven attribute loop; codegen emits a props object.
+   - **4a.** Tokenizer learns `=` and quoted strings (and `-` in names for `data-*`). ✓ done
+   - **4b.** Parser grows a `peek`-driven attribute loop; codegen emits a props object. ← *next*
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
    second mode (tag-mode vs text-mode).
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
@@ -499,4 +499,134 @@ Boolean-shorthand attributes (`<input disabled/>` → `{ disabled: true }`) and 
 strings are also 4b/later concerns; this step only adds the two lexical shapes. Expression-valued
 attributes (`id={x}`) wait for **Step 6** (`{ ... }` containers).
 
-> **Status:** _pending — extend `tokenize`, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `54a495e` (32 tests green, was 28). `tokenize` gained `=`
+> and double-quoted `string` tokens; the string scanner loops *until* the closing quote (so
+> `/`, spaces, `?` survive inside it) and throws on an unterminated string. `-` rejoined
+> `isNamePart` (not `isNameStart`) for `data-*` names. Parser still rejects `<div id="x"/>` at
+> `expect("/")` — that's 4b's job.
+
+---
+
+## Step 4b — Parser attribute loop + props-object codegen
+
+**Goal:** `<div id="x"/>` compiles to `createElement("div", { "id": "x" })`. The parser fills the
+`attributes` array; codegen turns it into a props object (or stays `null` when empty).
+
+### The crux
+
+The parser has only ever consumed a *fixed* sequence — `<` name `/` `>`, four tokens, no choices.
+Attributes break that: after the tag name there can be **zero or more** of them, then the close.
+So for the first time the parser must **look without consuming** — peek at the next token and
+*decide* "another attribute?" vs "the closing `/>`". That peek-driven loop is the new idea;
+everything else is bookkeeping.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("parses an attribute into the attributes list", () => {
+  assert.deepEqual(parse(tokenize('<div id="x"/>')), {
+    type: "element",
+    tag: "div",
+    attributes: [{ name: "id", value: "x" }],
+    children: [],
+  });
+});
+
+test("parses multiple attributes in order", () => {
+  assert.deepEqual(parse(tokenize('<a href="/x" title="go"/>')), {
+    type: "element",
+    tag: "a",
+    attributes: [
+      { name: "href", value: "/x" },
+      { name: "title", value: "go" },
+    ],
+    children: [],
+  });
+});
+
+test("compiles attributes to a props object", () => {
+  assert.equal(compile('<div id="x"/>'), 'createElement("div", { "id": "x" })');
+});
+
+test("no attributes still emits null props", () => {
+  assert.equal(compile("<br/>"), 'createElement("br", null)');
+});
+```
+
+That last test is the regression guard: the empty case must *still* produce `null`, not `{}`.
+Run `npm test`, watch the first three fail.
+
+### Minimal implementation
+
+**Parser** — replace the fixed middle of `parse` (between reading the tag and the closing
+`/` `>`) with a `peek`-driven loop:
+
+```js
+  const peek = () => tokens[pos];           // look at next token WITHOUT consuming
+
+  expect("<");
+  const tag = expect("name").value;
+
+  // zero or more attributes, until we hit the closing "/"
+  const attributes = [];
+  while (peek() && peek().type === "name") {
+    const name = next().value;              // attribute name
+    expect("=");                            // (value is required for now)
+    const value = expect("string").value;  // the quoted value
+    attributes.push({ name, value });
+  }
+
+  expect("/");
+  expect(">");
+
+  return { type: "element", tag, attributes, children: [] };
+```
+
+**Codegen** — replace the hard-coded `const props = "null";` in `generate`:
+
+```js
+  // Each attribute becomes a  "name": "value"  pair; join into an object literal.
+  // No attributes → React's no-props convention, the literal null.
+  const props =
+    node.attributes.length === 0
+      ? "null"
+      : `{ ${node.attributes
+          .map((a) => `${JSON.stringify(a.name)}: ${JSON.stringify(a.value)}`)
+          .join(", ")} }`;
+```
+
+### Why it works
+
+- **`peek` is the whole lesson.** `next` advances the cursor; `peek` reads `tokens[pos]` *without*
+  advancing. The loop condition asks "is the next token a `name`?" — if yes, an attribute follows;
+  if it's the `/`, we fall out of the loop. Deciding *before* consuming is what lets one grammar
+  rule handle zero, one, or many attributes. (Note the `peek() &&` guard: at end-of-input `peek()`
+  is `undefined`, and reading `.type` off it would throw the wrong error.)
+- **The loop body is a mini fixed-sequence.** Inside one iteration the grammar is rigid again —
+  `name`, `=`, `string` — so it's three ordinary `expect`/`next` calls. The flexibility lives
+  *only* in the `while`; each attribute is still deterministic.
+- **Codegen mirrors the data exactly.** Each `{name, value}` becomes `"name": "value"`, both sides
+  run through `JSON.stringify` for correct quoting/escaping, joined with `, ` inside braces. The
+  empty-array branch preserves the Step 3 contract — `null`, never `{}` — so `<br/>` is untouched.
+- **Two stages, one feature.** The token shapes existed after 4a but did nothing; now the parser
+  gives them structure and codegen gives them output. This is the stage-spanning pattern: a feature
+  isn't "done" until it reaches all the way through to emitted text.
+
+### Scope note
+
+Deferred on purpose:
+- **Boolean shorthand** (`<input disabled/>` → `{ "disabled": true }`): the loop currently
+  *requires* `=` and a value (`expect("=")`). Making the value optional — peek after the name for
+  `=` vs not — is a clean follow-up (call it 4c if you want it isolated).
+- **Component vs host** (`<App/>` → identifier, not `"App"`): still quoting every tag; that branch
+  is its own micro-step.
+- **Expression-valued attributes** (`id={x}`) are **Step 6**; **spread** (`{...rest}`) is **Step 8**.
+
+A judgment call baked into the test: it asserts `{ "id": "x" }` — keys quoted, via
+`JSON.stringify(a.name)`. React-style output would be `{ id: "x" }` (bare identifier keys). Quoted
+keys are chosen because they're *correct for any attribute name* (including `data-id`, not a valid
+bare key) and dead simple. Emitting bare keys where legal is a worthwhile later variation.
+
+> **Status:** _pending — implement the parser loop + codegen, then run `npm test` and hand off to `lbb:commit`._

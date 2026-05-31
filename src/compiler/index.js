@@ -78,6 +78,8 @@ export function parse(tokens) {
 
   const next = () => tokens[pos++];
 
+  const peek = () => tokens[pos];
+
   function expect(type) {
     const token = next();
     if (!token || token.type !== type) {
@@ -89,17 +91,30 @@ export function parse(tokens) {
 
   expect("<");
   const tag = expect("name").value;
+
+  // zero or more attributes, until we hit the closing "/"
+  const attributes = [];
+  while (peek() && peek().type === "name") {
+    const name = next().value;
+    expect("=");
+    const value = expect("string").value;
+    attributes.push({ name, value });
+  }
+
   expect("/");
   expect(">");
 
-  return { type: "element", tag, attributes: [], children: [] };
+  return { type: "element", tag, attributes, children: [] };
 }
 
 export function generate(node) {
   const type = JSON.stringify(node.tag);
 
   // No attributes yet
-  const props = "null";
+  const props =
+    node.attributes.length === 0
+      ? "null"
+      : `{ ${node.attributes.map((attr) => `${JSON.stringify(attr.name)}: ${JSON.stringify(attr.value)}`).join(", ")} }`;
 
   return `createElement(${type}, ${props})`;
 }

@@ -87,8 +87,36 @@ test("parses a multi-character tag name", () => {
   });
 });
 
+test("parses an attribute into the attributes list", () => {
+  assert.deepEqual(parse(tokenize('<div id="x"/>')), {
+    type: "element",
+    tag: "div",
+    attributes: [{ name: "id", value: "x" }],
+    children: [],
+  });
+});
+
+test("parses multiple attributes in order", () => {
+  assert.deepEqual(parse(tokenize('<a href="/x" title="go" />')), {
+    type: "element",
+    tag: "a",
+    attributes: [
+      { name: "href", value: "/x" },
+      { name: "title", value: "go" },
+    ],
+    children: [],
+  });
+});
+
 test("a malformed tag is a syntax error", () => {
   assert.throws(() => parse(tokenize("<br/")), /expected/i);
+});
+
+test("compiles attributes to a props object", () => {
+  assert.equal(
+    compile('<div id="x" />'),
+    'createElement("div", { "id": "x" })',
+  );
 });
 
 test("compiles a self-closing tag to a createElement call", () => {
