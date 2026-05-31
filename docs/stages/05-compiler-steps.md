@@ -39,8 +39,8 @@ can read and run, instead of three big half-built stages that don't do anything 
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
    second mode (tag-mode vs text-mode). Split in three:
    - **5a.** Tokenizer: text-mode + closing tags (a `text` token). ✓ done
-   - **5b.** Parser: open/close elements with children (recursion). ← *this step*
-   - **5c.** Codegen: children as trailing `createElement` args.
+   - **5b.** Parser: open/close elements with children (recursion). ✓ done
+   - **5c.** Codegen: children as trailing `createElement` args. ← *next*
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
 8. **Spread attributes.** `<div {...rest}/>`.
@@ -989,4 +989,9 @@ and end `parse` by returning `parseElement()`:
   follow-up), not this step.
 - **Expression-container children** `{x}` are **Step 6**; **fragments** `<>…</>` are **Step 7**.
 
-> **Status:** _pending — refactor `parse` into recursive helpers, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `79bf5d3` (40 tests green, was 37). `parse` refactored into
+> nested `parseElement`/`parseChildren` helpers closing over one shared cursor, so recursion
+> handles arbitrary nesting depth. Self-closing (`/>`) returns early with empty children; open
+> tags parse children until the matching `</tag>`, using two-token lookahead (`peek(1)`) to tell
+> a closing tag from a nested element. Mismatched and never-closed tags throw. Codegen still
+> ignores `children` — that's 5c.
