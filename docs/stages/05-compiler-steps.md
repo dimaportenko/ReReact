@@ -43,8 +43,8 @@ can read and run, instead of three big half-built stages that don't do anything 
    - **5c.** Codegen: children as trailing `createElement` args. ✓ done
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
    Split in three:
-   - **6a.** Tokenizer: the `expr` token (brace balancing). ← *next*
-   - **6b.** Expression children (codegen emits raw value *unquoted*).
+   - **6a.** Tokenizer: the `expr` token (brace balancing). ✓ done
+   - **6b.** Expression children (codegen emits raw value *unquoted*). ← *next*
    - **6c.** Expression attribute values.
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
 8. **Spread attributes.** `<div {...rest}/>`.
@@ -1259,4 +1259,8 @@ so `hi {x}` in `<p>hi {x}</p>` emits `text("hi ")` then `expr("x")` instead of s
 - **Empty containers** `{}` and **whitespace-only** `{ }` will tokenize as `expr` with an empty/
   blank value; whether to reject those is a parser-level decision for 6b, not here.
 
-> **Status:** _pending — add the `{`-balancing branch to `tokenize`, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `9a0e9f9` (47 tests green, was 43). A `{` branch in `tokenize`
+> copies up to the matching `}` into one opaque `expr` token via depth counting, so nested braces
+> (`{ {id: 1} }`) don't end it early; an unterminated expression throws. The branch sits before
+> the text-mode block so it fires in both modes, and the text scanner now also stops at `{`. Mode
+> is left untouched (an expression is a value, not a boundary). Parser support is 6b/6c.
