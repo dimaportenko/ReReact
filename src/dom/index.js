@@ -42,6 +42,7 @@ function normalize(vnode) {
 function diff(parentDom, newVNode, oldVNode) {
   if (newVNode == null) {
     if (oldVNode) {
+      unmount(oldVNode);
       parentDom.removeChild(oldVNode.dom);
     }
     return;
@@ -51,6 +52,7 @@ function diff(parentDom, newVNode, oldVNode) {
     mount(parentDom, newVNode, oldVNode ? oldVNode.dom : null);
 
     if (oldVNode) {
+      unmount(oldVNode);
       parentDom.removeChild(oldVNode.dom);
     }
 
@@ -148,6 +150,7 @@ function diffChildren(parentDom, newRaw, oldChildren) {
 
   for (const oldChild of oldChildren) {
     if (!reused.has(oldChild) && oldChild.dom.parentNode === parentDom) {
+      unmount(oldChild);
       parentDom.removeChild(oldChild.dom);
     }
   }
@@ -212,6 +215,29 @@ function rerender(instance) {
   instance.vnode.dom = rendered ? rendered.dom : null;
 }
 
+function unmount(vnode) {
+  if (!vnode) {
+    return;
+  }
+
+  if (typeof vnode.type === "function") {
+    const instance = vnode._instance;
+    for (const hook of instance.hooks) {
+      if (hook && typeof hook.cleanup === "function") {
+        hook.cleanup();
+      }
+    }
+
+    unmount(instance.rendered);
+
+    return;
+  }
+
+  for (const child of vnode.props.children) {
+    unmount(child);
+  }
+}
+
 export function useState(initial) {
   const instance = currentInstance;
   const i = hookIndex++;
@@ -250,4 +276,29 @@ export function useEffect(fn, deps) {
       instance.hooks[i] = { deps, cleanup };
     });
   }
+}
+
+export function useRef(initial) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  if (i >= instance.hooks.length) {
+    instance.hooks[i] = { current: initial };
+  }
+
+  return instance.hooks[i];
+}
+
+export function useMemo(factory, deps) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  const prev = instance.hooks[i];
+
+  const changed =
+    !prev || !deps || deps.some((dep, j) => !Object.is(dep, prev.deps[j]));
+
+  if (changed) {
+    instance.hooks[i] = { value: factory(), deps };
+  }
+
+  return instance.hooks[i].value;
 }

@@ -364,3 +364,215 @@ overwrites the slot. Empty `[]` runs once (next render: `some` over an empty arr
 **Scope note:** this covers mount / dep-change / cleanup-before-re-run. **Cleanup on
 *unmount*** (component removed from the tree) needs the reconciler to walk removed component
 vnodes and run their cleanups — that's **Step 5**, alongside `useRef` and `useMemo`.
+
+> **Status:** done — committed in `ac5f8f0` (17 tests green). The slot read bug
+> (`instance.hookIndex[i]` → `instance.hooks[i]`) was caught during validation.
+
+---
+
+## Step 5 — unmount cleanup + `useRef` + `useMemo`
+
+Three things, split into sub-steps. **5a (unmount cleanup)** is the real work; **5b** and
+**5c** are tiny additions on the slot machinery.
+
+### Step 5a — run effect cleanups on unmount
+
+Today cleanup only fires when an effect *re-runs* (dep change). When a component is **removed**
+from the tree its cleanups never run — a leak. The fix: teach the reconciler to walk a removed
+subtree and fire every component's effect cleanups. There are exactly **three** removal sites
+in `diff`/`diffChildren`; all call one new `unmount` helper.
+
+**Runnable test first** — add to `test/hooks.test.js`:
+
+```js
+test("useEffect cleanup runs on unmount", () => {
+  const root = newContainer();
+  const log = [];
+
+  function Child() {
+    useEffect(() => {
+      log.push("mount");
+      return () => log.push("unmount");
+    }, []);
+    return createElement("span", null, "child");
+  }
+
+  function App({ show }) {
+    return createElement("div", null, show ? createElement(Child, null) : null);
+  }
+
+  render(createElement(App, { show: true }), root);
+  assert.deepEqual(log, ["mount"]);
+
+  render(createElement(App, { show: false }), root); // Child leaves the tree
+  assert.deepEqual(log, ["mount", "unmount"]);
+});
+```
+
+It fails today: toggling `show` removes `Child`'s DOM but never calls its cleanup.
+
+**Minimal implementation** in `src/dom/index.js`. The walker — where children live differs by
+node kind, which is the one thing to get right:
+
+```js
+function unmount(vnode) {
+  if (!vnode) return;
+
+  // A component: run its effect cleanups, then recurse into what it rendered.
+  if (typeof vnode.type === "function") {
+    const instance = vnode._instance;
+    for (const hook of instance.hooks) {
+      if (hook && typeof hook.cleanup === "function") hook.cleanup();
+    }
+    unmount(instance.rendered);     // component children live on the instance
+    return;
+  }
+
+  // A host/text node: recurse into its normalized children.
+  for (const child of vnode.props.children) {
+    unmount(child);
+  }
+}
+```
+
+Then call it just before each `removeChild`. In `diff`, both removal branches:
+
+```js
+  if (newVNode == null) {
+    if (oldVNode) {
+      unmount(oldVNode);                    // add
+      parentDom.removeChild(oldVNode.dom);
+    }
+    return;
+  }
+
+  if (oldVNode == null || oldVNode.type !== newVNode.type) {
+    mount(parentDom, newVNode, oldVNode ? oldVNode.dom : null);
+    if (oldVNode) {
+      unmount(oldVNode);                    // add
+      parentDom.removeChild(oldVNode.dom);
+    }
+    return;
+  }
+```
+
+…and the leftover loop in `diffChildren`:
+
+```js
+  for (const oldChild of oldChildren) {
+    if (!reused.has(oldChild) && oldChild.dom.parentNode === parentDom) {
+      unmount(oldChild);                     // add
+      parentDom.removeChild(oldChild.dom);
+    }
+  }
+```
+
+Why this shape: a component's rendered subtree hangs off `instance.rendered`, while a host
+node's children are the normalized array in `props.children` — so the walk branches on
+`typeof vnode.type`. One `removeChild` on the top-level old node detaches the whole DOM
+subtree; `unmount` only *runs cleanups*, it doesn't touch the DOM, so it can freely recurse the
+whole tree. Existing reconcile tests stay green (host/text nodes have no cleanups). Expect 18
+green.
+
+### Step 5b — `useRef`
+
+A ref is just a stable object stored in a hook slot, created once and returned unchanged every
+render. Mutating `.current` does **not** re-render.
+
+**Test:**
+
+```js
+test("useRef returns the same object across renders", () => {
+  const root = newContainer();
+  const seen = [];
+
+  function C() {
+    const [n, setN] = useState(0);
+    const ref = useRef(0);
+    ref.current += 1;
+    seen.push(ref);
+    return createElement("button", { onClick: () => setN(n + 1) }, `${n}`);
+  }
+
+  render(createElement(C, null), root);
+  root.querySelector("button").click(); // forces a second render
+  assert.equal(seen[0], seen[1]);   // identical object
+  assert.equal(seen[0].current, 2); // survived + mutable across renders
+});
+```
+
+**Implementation:**
+
+```js
+export function useRef(initial) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  if (i >= instance.hooks.length) {
+    instance.hooks[i] = { current: initial }; // created once, kept forever
+  }
+  return instance.hooks[i];
+}
+```
+
+It's `useState` minus the setter and minus re-creating the box — the slot *is* the stable
+identity.
+
+### Step 5c — `useMemo`
+
+Cache a computed value; recompute only when deps change. Same deps-compare as `useEffect`, but
+it stores `{ value, deps }` and runs the factory *inline* (not after commit).
+
+**Test:**
+
+```js
+test("useMemo recomputes only when its deps change", () => {
+  const root = newContainer();
+  let calls = 0;
+
+  function C() {
+    const [n, setN] = useState(0);
+    const [m, setM] = useState(0);
+    const doubled = useMemo(() => { calls++; return n * 2; }, [n]);
+    return createElement(
+      "div",
+      null,
+      createElement("button", { id: "n", onClick: () => setN(n + 1) }, `${doubled}`),
+      createElement("button", { id: "m", onClick: () => setM(m + 1) }, "m"),
+    );
+  }
+
+  render(createElement(C, null), root);
+  assert.equal(calls, 1);             // computed on mount
+  root.querySelector("#m").click();   // re-render, n unchanged
+  assert.equal(calls, 1);             // memo skipped
+  root.querySelector("#n").click();   // n changed
+  assert.equal(calls, 2);             // recomputed
+});
+```
+
+**Implementation:**
+
+```js
+export function useMemo(factory, deps) {
+  const instance = currentInstance;
+  const i = hookIndex++;
+  const prev = instance.hooks[i];
+
+  const changed =
+    !prev || !deps || deps.some((dep, j) => !Object.is(dep, prev.deps[j]));
+
+  if (changed) {
+    instance.hooks[i] = { value: factory(), deps };
+  }
+  return instance.hooks[i].value;
+}
+```
+
+(`useCallback` would be `useMemo(() => fn, deps)` — worth a one-line mention, not its own step.)
+
+After all three: **20 tests**, and Stage 4 is functionally complete — `useState`, `useEffect`
+(incl. unmount), `useRef`, `useMemo`. That's the point to flip `04-hooks.md` to **Done**, fill
+in its build log / gotchas, and update the status table in `docs/README.md`.
+
+> **Status:** done — Stage 4 complete. See [`04-hooks.md`](04-hooks.md) for the consolidated
+> build log and gotchas.

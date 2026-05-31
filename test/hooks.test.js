@@ -2,7 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { createElement } from "../src/runtime/index.js";
-import { render, useState, useEffect } from "../src/dom/index.js";
+import {
+  render,
+  useState,
+  useEffect,
+  useRef,
+  useMemo,
+} from "../src/dom/index.js";
 
 const newContainer = () =>
   new JSDOM("<!doctype html><body></body>").window.document.body;
@@ -88,4 +94,81 @@ test("useEffect runs after commit, re-runs on dep change, cleans up first", () =
 
   root.querySelector("button").click();
   assert.deepEqual(log, ["run 0", "cleanup 0", "run 1"]);
+});
+
+test("useEffect cleanup runs on unmount", () => {
+  const root = newContainer();
+  const log = [];
+
+  function Child() {
+    useEffect(() => {
+      log.push("mount");
+      return () => log.push("unmount");
+    }, []);
+
+    return createElement("span", null, "child");
+  }
+
+  function App({ show }) {
+    return createElement("div", null, show ? createElement(Child, null) : null);
+  }
+
+  render(createElement(App, { show: true }), root);
+  assert.deepEqual(log, ["mount"]);
+
+  render(createElement(App, { show: false }), root);
+  assert.deepEqual(log, ["mount", "unmount"]);
+});
+
+test("useRef returns the same object across renders", () => {
+  const root = newContainer();
+  const seen = [];
+
+  function Component() {
+    const [n, setN] = useState(0);
+    const ref = useRef(0);
+
+    ref.current += 1;
+    seen.push(ref);
+
+    return createElement("button", { onClick: () => setN(n + 1) });
+  }
+
+  render(createElement(Component, null), root);
+  root.querySelector("button").click();
+  assert.equal(seen[0], seen[1]);
+  assert.equal(seen[0].current, 2);
+});
+
+test("useMemo recomputes only when its deps change", () => {
+  const root = newContainer();
+  let calls = 0;
+
+  function Component() {
+    const [n, setN] = useState(0);
+    const [m, setM] = useState(0);
+
+    const doubled = useMemo(() => {
+      calls++;
+      return n * 2;
+    }, [n]);
+
+    return createElement(
+      "div",
+      null,
+      createElement(
+        "button",
+        { id: "n", onClick: () => setN(n + 1) },
+        `${doubled}`,
+      ),
+      createElement("button", { id: "m", onClick: () => setM(n + 1) }, "m"),
+    );
+  }
+
+  render(createElement(Component, null), root);
+  assert.equal(calls, 1);
+  root.querySelector("#m").click();
+  assert.equal(calls, 1);
+  root.querySelector("#n").click();
+  assert.equal(calls, 2);
 });
