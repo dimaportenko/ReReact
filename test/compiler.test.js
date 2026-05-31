@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert";
-import { tokenize } from "../src/compiler/index.js";
+import { tokenize, parse } from "../src/compiler/index.js";
 
 test("tokenizes a self-closing tag", () => {
   assert.deepEqual(tokenize("<br/>"), [
@@ -27,4 +27,26 @@ test("a multi-character tag name scans as one name token", () => {
     { type: "/" },
     { type: ">" },
   ]);
+});
+
+test("parses a self-closing tag into an element node", () => {
+  assert.deepEqual(parse(tokenize("<br/>")), {
+    type: "element",
+    tag: "br",
+    attributes: [],
+    children: [],
+  });
+});
+
+test("parses a multi-character tag name", () => {
+  assert.deepEqual(parse(tokenize("<section/>")), {
+    type: "element",
+    tag: "section",
+    attributes: [],
+    children: [],
+  });
+});
+
+test("a malformed tag is a syntax error", () => {
+  assert.throws(() => parse(tokenize("<br/")), /expected/i);
 });

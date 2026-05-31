@@ -46,3 +46,25 @@ export function tokenize(input) {
 
   return tokens;
 }
+
+export function parse(tokens) {
+  let pos = 0; // cursor: index of the next unread token
+
+  const next = () => tokens[pos++];
+
+  function expect(type) {
+    const token = next();
+    if (!token || token.type !== type) {
+      const found = token ? token.type : "end of input";
+      throw new SyntaxError(`Expected "${type}" but found ${found}`);
+    }
+    return token;
+  }
+
+  expect("<");
+  const tag = expect("name").value;
+  expect("/");
+  expect(">");
+
+  return { type: "element", tag, attributes: [], children: [] };
+}
