@@ -38,8 +38,8 @@ can read and run, instead of three big half-built stages that don't do anything 
    - **4b.** Parser grows a `peek`-driven attribute loop; codegen emits a props object. ✓ done
 5. **Children & text.** `<div>hi</div>` — open/close tags, real text nodes. Tokenizer gains a
    second mode (tag-mode vs text-mode). Split in three:
-   - **5a.** Tokenizer: text-mode + closing tags (a `text` token). ← *next*
-   - **5b.** Parser: open/close elements with children (recursion).
+   - **5a.** Tokenizer: text-mode + closing tags (a `text` token). ✓ done
+   - **5b.** Parser: open/close elements with children (recursion). ← *next*
    - **5c.** Codegen: children as trailing `createElement` args.
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
@@ -800,4 +800,9 @@ Two surgical changes to the tag-mode branches you already have:
 - **Expression containers** `{x}` inside children are **Step 6**; they're a *third* lexical
   context and get their own mode handling there.
 
-> **Status:** _pending — restructure `tokenize` with a mode, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `25e7b3b` (37 tests green, was 35). `tokenize` gained a `mode`
+> flag: tag-mode is the old behaviour, text-mode runs from after a `>` until the next `<` and
+> emits one `text` token with whitespace intact. The `>` branch flips to text-mode; the text-mode
+> `<` branch flips back *without* consuming the `<`. Whitespace-skip moved into tag-mode only.
+> (The stray `syncBuiltinESMExports` import — falsely claimed gone in 4b and this 5a message — was
+> actually removed in the follow-up commit `e0c2b91`.)
