@@ -995,3 +995,104 @@ and end `parse` by returning `parseElement()`:
 > tags parse children until the matching `</tag>`, using two-token lookahead (`peek(1)`) to tell
 > a closing tag from a nested element. Mismatched and never-closed tags throw. Codegen still
 > ignores `children` — that's 5c.
+
+---
+
+## Step 5c — Codegen: children as trailing args
+
+**Goal:** close out the children sub-topic. `generate` walks the `children` array the parser has
+been filling and appends each child after the props argument, so the whole tree compiles end to
+end: `compile("<div>hi</div>")` → `createElement("div", null, "hi")`, and nested trees nest.
+
+### The crux
+
+`createElement(type, props, ...children)` takes children as **trailing arguments** — variadic, one
+per child. So codegen's job is to turn the `children` array into a comma-separated argument list
+glued after `props`. Two kinds of child need different rendering: a **text** node becomes a quoted
+string literal (`"hi"` via `JSON.stringify`), and an **element** node becomes *another
+`createElement(...)` call* — which means `generate` must **call itself** on element children. The
+parser recursed to build the tree; codegen recurses to walk it back out. Same shape, opposite
+direction.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("compiles a text child as a trailing string arg", () => {
+  assert.equal(compile("<div>hi</div>"), 'createElement("div", null, "hi")');
+});
+
+test("compiles nested element children recursively", () => {
+  assert.equal(
+    compile("<ul><li>a</li></ul>"),
+    'createElement("ul", null, createElement("li", null, "a"))',
+  );
+});
+
+test("compiles children alongside attributes", () => {
+  assert.equal(
+    compile('<p id="x">hi</p>'),
+    'createElement("p", { "id": "x" }, "hi")',
+  );
+});
+
+test("no children still emits just type and props", () => {
+  assert.equal(compile("<br/>"), 'createElement("br", null)');
+});
+```
+
+The nested test is the proof of recursion: the inner `createElement("li", null, "a")` appears as an
+*argument* to the outer call. The last test is the regression guard — a childless element must emit
+**no** trailing args (and no trailing comma). Run `npm test`, watch the first three fail.
+
+### Minimal implementation
+
+In `generate`, after computing `type` and `props`, render the children and assemble the arg list:
+
+```js
+  // Each child becomes one trailing argument:
+  //   text node    -> a quoted string literal
+  //   element node -> a nested createElement(...) call (recurse!)
+  const children = node.children.map((child) =>
+    child.type === "text" ? JSON.stringify(child.value) : generate(child),
+  );
+
+  // type and props are always present; children follow only if there are any,
+  // so a childless element emits no trailing comma.
+  const args = [type, props, ...children];
+  return `createElement(${args.join(", ")})`;
+```
+
+(Replace the old `return` line; keep the `type` and `props` computations above as-is.)
+
+### Why it works
+
+- **Codegen recursion is the mirror of parser recursion.** `parseChildren` called `parseElement`
+  to build nested nodes; now `generate` calls `generate` on each element child to emit nested calls.
+  The text-vs-element branch is the base case vs recursive case: text terminates (a literal),
+  elements recurse (another `generate`). An element five levels deep in the tree produces a
+  `createElement` call five levels deep in the output — structure preserved exactly.
+- **The spread + `join` handles the variadic shape and the empty case in one stroke.** `args`
+  always starts with `type` and `props`; `...children` adds zero or more after. When `children` is
+  empty the array is just `[type, props]`, so `join(", ")` yields `createElement("br", null)` with
+  no dangling comma. That's why the regression test passes without a special branch — the empty
+  case falls out of the general code.
+- **`JSON.stringify` on text reuses the quoting trick** from Step 3: it turns the raw text value
+  into a correct JS string literal, escaping quotes/newlines for free, so even `<p>say "hi"</p>`
+  would emit a valid argument.
+- **The output is now runnable React.** Feed `createElement("ul", null, createElement("li", null,
+  "a"))` to the runtime from Stage 1 and it builds the same element tree your hand-written calls did
+  — which is exactly what Step 9 (wiring) will verify against the examples.
+
+### Scope note
+
+- **Whitespace-only text children still pass straight through.** `<ul> <li/> </ul>` would emit
+  `createElement("ul", null, " ", createElement("li", null), " ")` — those `" "` args are real to
+  the runtime. Trimming/dropping insignificant whitespace is a deliberate later decision (a 5d
+  follow-up or handled at render time); this step emits faithfully what the parser produced.
+- **Expression-container children** `{x}` are **Step 6** — they'll emit the raw expression text
+  *unquoted* (an identifier, not a string), which is exactly why they need their own step.
+- **Fragments** (`<>…</>`) are **Step 7**; **spread props** **Step 8**.
+
+> **Status:** _pending — extend `generate` to walk children, then run `npm test` and hand off to `lbb:commit`._

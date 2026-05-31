@@ -195,3 +195,21 @@ test("compiles a self-closing tag to a createElement call", () => {
 test("the tag name is emitted as a quoted string literal", () => {
   assert.equal(compile("<section />"), 'createElement("section", null)');
 });
+
+test("compiles a text child as a trailing string arg", () => {
+  assert.equal(compile("<div>hi</div>"), 'createElement("div", null, "hi")');
+});
+
+test("compiles nexted element children recursively", () => {
+  assert.equal(
+    compile("<ul><li>a</li></ul>"),
+    'createElement("ul", null, createElement("li", null, "a"))',
+  );
+});
+
+test("compiles children alonside attributes", () => {
+  assert.equal(
+    compile('<p id="x">hi</p>'),
+    'createElement("p", { "id": "x" }, "hi")',
+  );
+});

@@ -180,5 +180,11 @@ export function generate(node) {
       ? "null"
       : `{ ${node.attributes.map((attr) => `${JSON.stringify(attr.name)}: ${JSON.stringify(attr.value)}`).join(", ")} }`;
 
-  return `createElement(${type}, ${props})`;
+  const children = node.children.map((child) =>
+    child.type === "text" ? JSON.stringify(child.value) : generate(child),
+  );
+
+  const args = [type, props, ...children];
+
+  return `createElement(${args.join(", ")})`;
 }
