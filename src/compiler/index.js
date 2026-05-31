@@ -9,6 +9,36 @@ export function tokenize(input) {
   while (i < input.length) {
     const c = input[i];
 
+    if (c === "{") {
+      i++;
+      const start = i;
+      let depth = 1;
+      while (i < input.length && depth > 0) {
+        if (input[i] === "{") {
+          depth++;
+        } else if (input[i] === "}") {
+          depth--;
+        }
+
+        if (depth === 0) {
+          break;
+        }
+
+        i++;
+      }
+
+      if (depth !== 0) {
+        throw new SyntaxError(
+          `Unterminated expression starting at index ${start - 1}`,
+        );
+      }
+
+      tokens.push({ type: "expr", value: input.slice(start, i) });
+      i++;
+
+      continue;
+    }
+
     if (mode === "text") {
       if (c === "<") {
         mode = "tag";

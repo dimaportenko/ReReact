@@ -91,6 +91,51 @@ test("text content preserves internal whitespace", () => {
   ]);
 });
 
+test("tokenizes an expression container as one expr token", () => {
+  assert.deepEqual(tokenize("<p>{count}</p>"), [
+    { type: "<" },
+    { type: "name", value: "p" },
+    { type: ">" },
+    { type: "expr", value: "count" },
+    { type: "<" },
+    { type: "/" },
+    { type: "name", value: "p" },
+    { type: ">" },
+  ]);
+});
+
+test("an expression's inner content is opaque (not tokenized)", () => {
+  assert.deepEqual(tokenize("<p>{count + 1}</p>"), [
+    { type: "<" },
+    { type: "name", value: "p" },
+    { type: ">" },
+    { type: "expr", value: "count + 1" },
+    { type: "<" },
+    { type: "/" },
+    { type: "name", value: "p" },
+    { type: ">" },
+  ]);
+});
+
+test("nested brances inside an expression are balanced, not ended early", () => {
+  assert.deepEqual(tokenize("<x a={ {id: 1} } />"), [
+    { type: "<" },
+    { type: "name", value: "x" },
+    { type: "name", value: "a" },
+    { type: "=" },
+    { type: "expr", value: " {id: 1} " },
+    { type: "/" },
+    { type: ">" },
+  ]);
+});
+
+test("an unterminated expression is a syntax error", () => {
+  assert.throws(
+    () => tokenize("<p>{count</p>"),
+    /unterminated|expression|brace/i,
+  );
+});
+
 test("an unterminated string is a syntax error", () => {
   assert.throws(() => tokenize('<div id="x/>'), /unterminated|string/i);
 });

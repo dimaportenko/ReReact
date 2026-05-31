@@ -41,7 +41,11 @@ can read and run, instead of three big half-built stages that don't do anything 
    - **5a.** Tokenizer: text-mode + closing tags (a `text` token). ✓ done
    - **5b.** Parser: open/close elements with children (recursion). ✓ done
    - **5c.** Codegen: children as trailing `createElement` args. ✓ done
-6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children. ← *next*
+6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
+   Split in three:
+   - **6a.** Tokenizer: the `expr` token (brace balancing). ← *next*
+   - **6b.** Expression children (codegen emits raw value *unquoted*).
+   - **6c.** Expression attribute values.
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
 8. **Spread attributes.** `<div {...rest}/>`.
 9. **Wiring.** A `.jsx` → `.js` transform (CLI or import hook); run an example through it
@@ -1100,3 +1104,159 @@ In `generate`, after computing `type` and `props`, render the children and assem
 > `generate` call — and emits `[type, props, ...children].join(", ")`, so a childless element
 > stays `createElement("br", null)` with no trailing comma. **Step 5 complete: a nested JSX tree
 > compiles end to end to runnable `createElement` calls.**
+
+---
+
+## Step 6 — Expression containers `{ ... }` (a new topic)
+
+This is the conceptual centre of the whole stage — the place where the "**we do not build a
+JavaScript parser**" decision stops being a slogan and becomes a line of code.
+
+### The crux
+
+Everything inside `{ ... }` is **arbitrary JavaScript** — `count`, `count + 1`, `items.map(x =>
+<li>{x}</li>)`. We refuse to understand it. The tokenizer's only job is to find where the
+expression *ends* — the matching `}` — and hand back everything between the braces as one opaque
+chunk of text. We never tokenize the JS inside; we copy it through **verbatim**.
+
+Two things make this subtle:
+1. **Brace balancing.** The expression can itself contain braces — object literals `{a: 1}`,
+   nested JSX with more containers. So "the matching `}`" isn't "the next `}`" — you must count
+   depth: `+1` on `{`, `−1` on `}`, and stop when depth returns to zero. (We accept one honest
+   limitation: a `}` inside a *string or comment* within the expression would fool the counter.
+   Handling that needs a real JS lexer, which is explicitly out of scope — we'll note it, not
+   solve it.)
+2. **Unquoted output.** A text child compiles to a *quoted string* (`"hi"`); an expression child
+   compiles to the **raw expression, unquoted** (`count`, not `"count"`). That difference — quote
+   vs don't-quote — is the entire point of the feature, and it's why expressions can't just reuse
+   the text-node path.
+
+Expression containers appear in **two** places — as a **child** (`<p>{count}</p>`) and as an
+**attribute value** (`<input value={x}/>`) — so this topic splits along that line.
+
+### Sub-step plan
+
+- **6a. Tokenizer: the `expr` token (brace balancing).** `{count + 1}` → a single
+  `{ type: "expr", value: "count + 1" }` token, scanned by depth-counting. Works in both
+  tag-mode and text-mode. ← *next*
+- **6b. Expression children.** Parser accepts an `expr` token in a child list as
+  `{ type: "expression", value }`; codegen emits the raw value **unquoted** as a trailing arg.
+- **6c. Expression attribute values.** Parser accepts `name={expr}` (value is an expression, not
+  a string); codegen emits `name: value` with the value **unquoted**.
+
+---
+
+## Step 6a — Tokenizer: the `expr` token (brace balancing)
+
+**Goal:** `tokenize` recognises `{ ... }` and emits one `expr` token whose `value` is the verbatim
+text between the *balanced* braces — correctly skipping past nested braces inside.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("tokenizes an expression container as one expr token", () => {
+  assert.deepEqual(tokenize("<p>{count}</p>"), [
+    { type: "<" }, { type: "name", value: "p" }, { type: ">" },
+    { type: "expr", value: "count" },
+    { type: "<" }, { type: "/" }, { type: "name", value: "p" }, { type: ">" },
+  ]);
+});
+
+test("an expression's inner content is opaque (not tokenized)", () => {
+  // "count + 1" comes back as ONE value string, spaces and "+" intact
+  assert.deepEqual(tokenize("<p>{count + 1}</p>"), [
+    { type: "<" }, { type: "name", value: "p" }, { type: ">" },
+    { type: "expr", value: "count + 1" },
+    { type: "<" }, { type: "/" }, { type: "name", value: "p" }, { type: ">" },
+  ]);
+});
+
+test("nested braces inside an expression are balanced, not ended early", () => {
+  // the inner "{ id: 1 }" must NOT end the expression at the first "}"
+  assert.deepEqual(tokenize("<x a={ {id: 1} }/>"), [
+    { type: "<" }, { type: "name", value: "x" },
+    { type: "name", value: "a" }, { type: "=" },
+    { type: "expr", value: " {id: 1} " },
+    { type: "/" }, { type: ">" },
+  ]);
+});
+
+test("an unterminated expression is a syntax error", () => {
+  assert.throws(() => tokenize("<p>{count</p>"), /unterminated|expression|brace/i);
+});
+```
+
+The third test is the whole point: `{ {id: 1} }` has a nested object literal, and a naive "stop at
+the first `}`" scanner would cut the expression off mid-way. Run `npm test`, watch them fail.
+
+### Minimal implementation
+
+Add **one** branch to the `tokenize` loop. It must run in *both* modes — an expression is just as
+valid as an attribute value (tag-mode) as it is between tags (text-mode) — so place it where it
+sees every character. Simplest: handle `{` right at the top of the loop body, before the
+mode-specific logic:
+
+```js
+    // expression container: copy everything up to the MATCHING "}" verbatim.
+    // depth counting lets nested braces ({a:1}, nested JSX) pass through.
+    if (c === "{") {
+      i++;                       // step over the opening "{"
+      const start = i;
+      let depth = 1;             // we're inside one brace
+      while (i < input.length && depth > 0) {
+        if (input[i] === "{") depth++;
+        else if (input[i] === "}") depth--;
+        if (depth === 0) break;  // don't consume the closing "}" into the value
+        i++;
+      }
+      if (depth !== 0) {
+        throw new SyntaxError(`Unterminated expression starting at index ${start - 1}`);
+      }
+      tokens.push({ type: "expr", value: input.slice(start, i) });
+      i++;                       // step over the closing "}"
+      // after an expression in text position, we're still in text-mode;
+      // in tag position, still tag-mode — so DON'T touch `mode` here.
+      continue;
+    }
+```
+
+Put this branch **before** the `if (mode === "text")` block so it's reachable in both modes. One
+wrinkle: in text-mode your scanner currently reads text "until `<`" — it will now also need to stop
+at `{`. Widen that inner condition:
+
+```js
+      while (i < input.length && input[i] !== "<" && input[i] !== "{") i++;
+```
+
+so `hi {x}` in `<p>hi {x}</p>` emits `text("hi ")` then `expr("x")` instead of swallowing the `{`.
+
+### Why it works
+
+- **Depth counting is the entire idea.** A flat "find the next `}`" scanner is wrong the moment an
+  expression contains its own braces. Tracking `depth` — `+1` per `{`, `−1` per `}`, stop at zero —
+  is exactly how you match *balanced* delimiters, the same trick a calculator uses for parentheses.
+  When depth hits zero you've found *the* matching brace, not just *a* brace.
+- **We never look at what's inside.** The loop only cares about `{` and `}`; every other character
+  — identifiers, operators, spaces, even a whole nested `<li>{x}</li>` — is copied without
+  inspection. That's the "no JS parser" promise made literal: the value string is opaque payload.
+- **`slice(start, i)` captures the raw expression**, braces excluded (we `i++` past the opener
+  before recording `start`, and `break` before consuming the closer). The two tests with internal
+  spaces (`count + 1`, ` {id: 1} `) prove the whitespace is preserved verbatim — because, unlike
+  tag-mode, nothing in here skips anything.
+- **Mode is deliberately left untouched.** An expression is a *value*, not a structural boundary,
+  so it doesn't open or close a tag. Whatever mode we were in before `{`, we're in after `}`.
+
+### Scope note
+
+- **6a stops at the token.** The parser still rejects `expr` tokens (it has no branch for them), so
+  `<p>{count}</p>` won't *parse* yet — that's **6b** (children) and **6c** (attributes).
+- **The honest limitation:** a `}` inside a *string* or *comment* within the expression
+  (`{ "}" }`, `{ x /* } */ }`) will miscount, because we don't lex JS. Real Babel does; we
+  deliberately don't. Worth a one-line code comment so the next reader knows it's a *known* corner,
+  not an oversight.
+- **Empty containers** `{}` and **whitespace-only** `{ }` will tokenize as `expr` with an empty/
+  blank value; whether to reject those is a parser-level decision for 6b, not here.
+
+> **Status:** _pending — add the `{`-balancing branch to `tokenize`, then run `npm test` and hand off to `lbb:commit`._
