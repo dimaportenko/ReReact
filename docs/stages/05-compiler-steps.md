@@ -45,7 +45,7 @@ can read and run, instead of three big half-built stages that don't do anything 
    Split in three:
    - **6a.** Tokenizer: the `expr` token (brace balancing). ✓ done
    - **6b.** Expression children (codegen emits raw value *unquoted*). ✓ done
-   - **6c.** Expression attribute values. ← *next*
+   - **6c.** Expression attribute values. ✓ done
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
 8. **Spread attributes.** `<div {...rest}/>`.
 9. **Wiring.** A `.jsx` → `.js` transform (CLI or import hook); run an example through it
@@ -1382,3 +1382,138 @@ more case.)
 > recurse. So `<p>{count}</p>` → `createElement("p", null, count)` (unquoted), and mixed children
 > `<p>hi {name}</p>` → `"hi ", name`. The text scanner stopping at `{` (added in 6a) is finally
 > exercised. Expression attributes are 6c.
+
+---
+
+## Step 6c — Expression attribute values
+
+**Goal:** the parser's attribute loop accepts `name={expr}` as well as `name="str"`, and codegen
+emits an expression value **unquoted** in the props object — so `compile('<input value={x}/>')` →
+`createElement("input", { "value": x })`. This finishes the expression-container topic: `{ ... }`
+now works in *both* positions, child and attribute.
+
+### The crux
+
+It's the **same quote-vs-don't-quote split as 6b**, moved into the props object. After `=` the
+value can now be one of two token types — a `string` (quote it) or an `expr` (emit raw). The one
+real design choice is how the attribute node *remembers which kind it is* so codegen can decide.
+The constraint: the existing string-attribute tests assert `{ name: "id", value: "x" }` exactly
+(`deepEqual`), so you **must not** add a field to string attributes — adding `expression: false`
+would break them. The clean move: tag *only* expression attributes with a flag, leaving string
+attributes byte-for-byte unchanged.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("parses an expression attribute, flagged as an expression", () => {
+  assert.deepEqual(parse(tokenize("<input value={x}/>")), {
+    type: "element",
+    tag: "input",
+    attributes: [{ name: "value", value: "x", expression: true }],
+    children: [],
+  });
+});
+
+test("a string attribute is unchanged (no expression flag)", () => {
+  // regression guard: string attrs must stay exactly { name, value }
+  assert.deepEqual(parse(tokenize('<div id="x"/>')), {
+    type: "element",
+    tag: "div",
+    attributes: [{ name: "id", value: "x" }],
+    children: [],
+  });
+});
+
+test("compiles an expression attribute UNQUOTED in the props object", () => {
+  assert.equal(
+    compile("<input value={x}/>"),
+    'createElement("input", { "value": x })',
+  );
+});
+
+test("string and expression attributes mix in one props object", () => {
+  assert.equal(
+    compile('<a href="/x" onClick={go}/>'),
+    'createElement("a", { "href": "/x", "onClick": go })',
+  );
+});
+```
+
+The mix test is the proof: `"href"` keeps its quoted string value, `"onClick"` gets the bare
+identifier `go` — quote and don't-quote, side by side in one object, mirroring the side-by-side
+children test from 6b. Run `npm test`, watch them fail.
+
+### Minimal implementation
+
+**Parser** — in `parseElement`'s attribute loop, branch on the token type after `=`:
+
+```js
+    while (peek() && peek().type === "name") {
+      const name = next().value;
+      expect("=");
+      // value is either a quoted string or an expression container
+      if (peek() && peek().type === "expr") {
+        attributes.push({ name, value: next().value, expression: true });
+      } else {
+        attributes.push({ name, value: expect("string").value });
+      }
+    }
+```
+
+(String attributes still push exactly `{ name, value }` — no flag — so the regression test holds.)
+
+**Codegen** — in the props map, quote a string value but emit an expression value raw:
+
+```js
+  const props =
+    node.attributes.length === 0
+      ? "null"
+      : `{ ${node.attributes
+          .map((attr) => {
+            const value = attr.expression ? attr.value : JSON.stringify(attr.value);
+            return `${JSON.stringify(attr.name)}: ${value}`;
+          })
+          .join(", ")} }`;
+```
+
+### Why it works
+
+- **The flag is the quote decision, carried on the node.** Just like children label themselves
+  `text` vs `expression`, an attribute now optionally carries `expression: true`. Codegen reads it:
+  flag set → `attr.value` raw; flag absent → `JSON.stringify(attr.value)`. Same parser-labels /
+  codegen-decides separation as 6b.
+- **Absent-means-string keeps the old shape intact.** `attr.expression` is `undefined` for string
+  attributes, which is falsy — so the ternary takes the `JSON.stringify` branch without the field
+  ever needing to exist. That's why string attributes stay literally `{ name, value }` and the
+  regression test passes untouched. (Adding `expression: false` would've worked for codegen but
+  broken the `deepEqual` — the absence *is* the signal.)
+- **The tokenizer needed zero changes.** 6a's `{`-branch already runs in tag-mode, so `value={x}`
+  was *already* tokenizing to `name(value) = expr(x)`. The only thing missing was the parser
+  accepting an `expr` where it previously demanded a `string` — this step is purely "widen the
+  grammar `= string` to `= (string | expr)`," parser + codegen, no lexer work.
+- **`peek().type === "expr"` chooses without backtracking.** One-token lookahead after `=` picks
+  the branch; the `else` still uses `expect("string")` so a missing/!wrong value token throws the
+  same clear error as before. No ambiguity, no rewind.
+
+### Scope note
+
+- **This completes Step 6.** `{ ... }` now compiles in both children (6b) and attributes (6c),
+  always emitted verbatim/unquoted — the "opaque pass-through JS" promise fully delivered across
+  the two positions where containers appear.
+- **Spread attributes** `<div {...rest}/>` are **Step 8** — note they *look* like an expression
+  but aren't a `name={value}` pair; they need their own parser branch (a `{` immediately where an
+  attribute name is expected, not after `=`).
+- **Boolean shorthand** (`<input disabled/>`, no `=`) is still deferred (the loop still requires
+  `=`); it's an independent follow-up whenever you want it.
+- **Empty `{}` attribute** (`value={}`) would emit `{ "value":  }` — invalid JS, same empty-
+  container caveat as 6b; tests avoid it.
+
+> **Status:** done — committed in `97ae4dd` (55 tests green, was 52). The parser's
+> attribute loop now branches on a one-token lookahead after `=`: an `expr` token pushes
+> `{ name, value, expression: true }`, a `string` still pushes exactly `{ name, value }` (no flag,
+> so the string-attribute regression holds). Codegen reads the flag — expression value emitted raw,
+> string value through `JSON.stringify` — so `<a href="/x" onClick={go}/>` mixes a quoted string and
+> a bare identifier in one props object. Tokenizer needed no changes (6a already scanned `value={x}`
+> as `name = expr`). **Step 6 complete: `{ ... }` now compiles in both children (6b) and attributes (6c).**

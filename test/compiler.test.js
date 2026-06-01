@@ -230,7 +230,7 @@ test("parses nested element children (recursion)", () => {
 });
 
 test("parses an expression child into an expression node", () => {
-  assert.deepEqual(parse(tokenize("<p>{count}</p>}")), {
+  assert.deepEqual(parse(tokenize("<p>{count}</p>")), {
     type: "element",
     tag: "p",
     attributes: [],
@@ -257,6 +257,29 @@ test("a mismatched closing tag is a syntax error", () => {
   assert.throws(
     () => parse(tokenize("<div>hi</span>")),
     /mismatch|closing|span|div/i,
+  );
+});
+
+test("parses an expression attribute, flagged as an expression", () => {
+  assert.deepEqual(parse(tokenize("<input value={x}/>")), {
+    type: "element",
+    tag: "input",
+    attributes: [{ name: "value", value: "x", expression: true }],
+    children: [],
+  });
+});
+
+test("compile an expression attribute UNQUOTED in the props object", () => {
+  assert.equal(
+    compile("<input value={x}/>"),
+    'createElement("input", { "value": x })',
+  );
+});
+
+test("string and expression attributes mix in one props object", () => {
+  assert.equal(
+    compile('<a href="/x" onClick={go}/>'),
+    'createElement("a", { "href": "/x", "onClick": go })',
   );
 });
 

@@ -141,8 +141,12 @@ export function parse(tokens) {
     while (peek() && peek().type === "name") {
       const name = next().value;
       expect("=");
-      const value = expect("string").value;
-      attributes.push({ name, value });
+      if (peek() && peek().type === "expr") {
+        attributes.push({ name, value: next().value, expression: true });
+      } else {
+        const value = expect("string").value;
+        attributes.push({ name, value });
+      }
     }
 
     if (peek() && peek().type === "/") {
@@ -213,7 +217,14 @@ export function generate(node) {
   const props =
     node.attributes.length === 0
       ? "null"
-      : `{ ${node.attributes.map((attr) => `${JSON.stringify(attr.name)}: ${JSON.stringify(attr.value)}`).join(", ")} }`;
+      : `{ ${node.attributes
+          .map((attr) => {
+            const value = attr.expression
+              ? attr.value
+              : JSON.stringify(attr.value);
+            return `${JSON.stringify(attr.name)}: ${value}`;
+          })
+          .join(", ")} }`;
 
   const children = node.children.map((child) => {
     if (child.type === "text") {
