@@ -1510,7 +1510,7 @@ children test from 6b. Run `npm test`, watch them fail.
 - **Empty `{}` attribute** (`value={}`) would emit `{ "value":  }` — invalid JS, same empty-
   container caveat as 6b; tests avoid it.
 
-> **Status:** done — committed in `97ae4dd` (55 tests green, was 52). The parser's
+> **Status:** done — committed in `a4b504a` (55 tests green, was 52). The parser's
 > attribute loop now branches on a one-token lookahead after `=`: an `expr` token pushes
 > `{ name, value, expression: true }`, a `string` still pushes exactly `{ name, value }` (no flag,
 > so the string-attribute regression holds). Codegen reads the flag — expression value emitted raw,
