@@ -44,8 +44,8 @@ can read and run, instead of three big half-built stages that don't do anything 
 6. **Expression containers.** `{ ... }` as opaque pass-through, in both attributes and children.
    Split in three:
    - **6a.** Tokenizer: the `expr` token (brace balancing). ✓ done
-   - **6b.** Expression children (codegen emits raw value *unquoted*). ← *next*
-   - **6c.** Expression attribute values.
+   - **6b.** Expression children (codegen emits raw value *unquoted*). ✓ done
+   - **6c.** Expression attribute values. ← *next*
 7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
 8. **Spread attributes.** `<div {...rest}/>`.
 9. **Wiring.** A `.jsx` → `.js` transform (CLI or import hook); run an example through it
@@ -1376,4 +1376,9 @@ more case.)
 - **Whitespace-only text** between an expression and a tag still rides through as text args, same as
   Step 5 — untouched here.
 
-> **Status:** _pending — add the `expr` branches to `parseChildren` and `generate`, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `fdb1698` (52 tests green, was 47). `parseChildren` gained an
+> `expr` branch producing `{ type: "expression", value }`; `generate`'s child map became a
+> three-way chain — text → `JSON.stringify` (quoted), expression → `child.value` (raw), element →
+> recurse. So `<p>{count}</p>` → `createElement("p", null, count)` (unquoted), and mixed children
+> `<p>hi {name}</p>` → `"hi ", name`. The text scanner stopping at `{` (added in 6a) is finally
+> exercised. Expression attributes are 6c.
