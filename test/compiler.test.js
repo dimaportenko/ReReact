@@ -129,6 +129,20 @@ test("nested brances inside an expression are balanced, not ended early", () => 
   ]);
 });
 
+test("children mix of text and expression", () => {
+  assert.deepEqual(tokenize("<p>hi {name}</p>"), [
+    { type: "<" },
+    { type: "name", value: "p" },
+    { type: ">" },
+    { type: "text", value: "hi " },
+    { type: "expr", value: "name" },
+    { type: "<" },
+    { type: "/" },
+    { type: "name", value: "p" },
+    { type: ">" },
+  ]);
+});
+
 test("an unterminated expression is a syntax error", () => {
   assert.throws(
     () => tokenize("<p>{count</p>"),
@@ -213,6 +227,30 @@ test("parses nested element children (recursion)", () => {
       },
     ],
   });
+});
+
+test("parses an expression child into an expression node", () => {
+  assert.deepEqual(parse(tokenize("<p>{count}</p>}")), {
+    type: "element",
+    tag: "p",
+    attributes: [],
+    children: [{ type: "expression", value: "count" }],
+  });
+});
+
+test("compiles an expression child to an UNQUOTED trailing arg", () => {
+  assert.equal(compile("<p>{count}</p>"), 'createElement("p", null, count)');
+});
+
+test("text and expression children sit side by side", () => {
+  assert.equal(
+    compile("<p>hi {name}</p>"),
+    'createElement("p", null, "hi ", name)',
+  );
+});
+
+test("an element and an expression child compile together", () => {
+  assert.equal(compile("<ul>{items}</ul>"), 'createElement("ul", null, items)');
 });
 
 test("a mismatched closing tag is a syntax error", () => {

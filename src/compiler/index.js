@@ -46,7 +46,7 @@ export function tokenize(input) {
       }
 
       const start = i;
-      while (i < input.length && input[i] !== "<") {
+      while (i < input.length && input[i] !== "<" && input[i] !== "{") {
         i++;
       }
       tokens.push({ type: "text", value: input.slice(start, i) });
@@ -180,6 +180,11 @@ export function parse(tokens) {
         return children;
       }
 
+      if (token.type === "expr") {
+        children.push({ type: "expression", value: next().value });
+        continue;
+      }
+
       // text child
       if (token.type === "text") {
         children.push({ type: "text", value: next().value });
@@ -210,9 +215,15 @@ export function generate(node) {
       ? "null"
       : `{ ${node.attributes.map((attr) => `${JSON.stringify(attr.name)}: ${JSON.stringify(attr.value)}`).join(", ")} }`;
 
-  const children = node.children.map((child) =>
-    child.type === "text" ? JSON.stringify(child.value) : generate(child),
-  );
+  const children = node.children.map((child) => {
+    if (child.type === "text") {
+      return JSON.stringify(child.value);
+    }
+    if (child.type === "expression") {
+      return child.value;
+    }
+    return generate(child);
+  });
 
   const args = [type, props, ...children];
 

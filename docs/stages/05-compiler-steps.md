@@ -1264,3 +1264,116 @@ so `hi {x}` in `<p>hi {x}</p>` emits `text("hi ")` then `expr("x")` instead of s
 > (`{ {id: 1} }`) don't end it early; an unterminated expression throws. The branch sits before
 > the text-mode block so it fires in both modes, and the text scanner now also stops at `{`. Mode
 > is left untouched (an expression is a value, not a boundary). Parser support is 6b/6c.
+
+---
+
+## Step 6b — Expression children
+
+**Goal:** an `expr` token sitting in a child list becomes an AST node `{ type: "expression", value }`,
+and codegen emits its `value` **raw and unquoted** as a trailing arg — so
+`compile("<p>{count}</p>")` → `createElement("p", null, count)`. Note `count`, **not** `"count"`.
+
+### The crux
+
+This is where the quote-vs-don't-quote distinction from the topic intro becomes one line of code.
+Both a text child and an expression child are "things between the tags," and both ride out as
+trailing `createElement` args — but a **text** node is *data* (it must become the string literal
+`"hi"`), while an **expression** is *code* (it must stay the identifier `count`, evaluated at
+runtime). Same slot in the output, opposite treatment: text gets `JSON.stringify`, expression gets
+copied verbatim. Get that and the whole step is two tiny additions — one in the parser, one in
+codegen.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("parses an expression child into an expression node", () => {
+  assert.deepEqual(parse(tokenize("<p>{count}</p>")), {
+    type: "element",
+    tag: "p",
+    attributes: [],
+    children: [{ type: "expression", value: "count" }],
+  });
+});
+
+test("compiles an expression child to an UNQUOTED trailing arg", () => {
+  // the point of the whole feature: count, not "count"
+  assert.equal(compile("<p>{count}</p>"), 'createElement("p", null, count)');
+});
+
+test("text and expression children sit side by side", () => {
+  assert.equal(
+    compile("<p>hi {name}</p>"),
+    'createElement("p", null, "hi ", name)',
+  );
+});
+
+test("an element and an expression child compile together", () => {
+  assert.equal(
+    compile("<ul>{items}</ul>"),
+    'createElement("ul", null, items)',
+  );
+});
+```
+
+The third test is the real proof: `"hi "` is **quoted** (it's text) and `name` is **bare** (it's
+an expression), side by side in the same arg list — and it also exercises the text-mode scanner
+stopping at `{`, which 6a added but no test until now actually triggered. Run `npm test`, watch
+them fail.
+
+### Minimal implementation
+
+**Parser** — add one branch in `parseChildren`, alongside the existing `text` and `<` branches:
+
+```js
+      // expression child — opaque JS, kept verbatim
+      if (token.type === "expr") {
+        children.push({ type: "expression", value: next().value });
+        continue;
+      }
+```
+
+**Codegen** — extend the child-mapping in `generate` to handle the new node type:
+
+```js
+  const children = node.children.map((child) => {
+    if (child.type === "text") return JSON.stringify(child.value); // data → quoted
+    if (child.type === "expression") return child.value;           // code → verbatim
+    return generate(child);                                        // nested element → recurse
+  });
+```
+
+(That replaces the two-branch ternary you have now with a three-way `if` chain — same shape, one
+more case.)
+
+### Why it works
+
+- **The node type carries the quote decision.** The parser doesn't decide how to render — it just
+  labels: `text` for data, `expression` for code, `element` for a subtree. Codegen reads the label
+  and picks the treatment. Keeping "what is it" (parser) separate from "how do I emit it" (codegen)
+  is why adding a child kind is one line in each, not a tangle.
+- **`return child.value` is the entire feature.** No `JSON.stringify`, no quotes — the raw text the
+  tokenizer captured in 6a goes straight into the output. `{count}` parsed to `value: "count"`, and
+  `"count"` (the 5 characters) is emitted as-is, producing the *identifier* `count` in the
+  generated source. That's the runtime reading a variable instead of a string literal.
+- **The side-by-side test proves the split is real.** `<p>hi {name}</p>` tokenizes to
+  `text("hi ")` then `expr("name")`; the parser makes one `text` node and one `expression` node;
+  codegen quotes the first and not the second → `"hi ", name`. Two children, two code paths, one
+  arg list.
+- **Everything else is unchanged.** Element recursion still falls through to `generate(child)`, and
+  the `[type, props, ...children]` join from 5c handles the new args with zero changes — an
+  expression is just another entry in the children array.
+
+### Scope note
+
+- **Expression *attributes*** (`<input value={x}/>`) are **6c** — the tokenizer already emits the
+  `expr` token there (6a works in tag-mode), but the *parser's attribute loop* still only accepts
+  `= string`, so `value={x}` won't parse until 6c teaches it `= (string | expr)`.
+- **Empty `{}`** would parse to `{ type: "expression", value: "" }` and emit an empty arg
+  (`createElement("p", null, )`) — invalid JS. Real JSX treats `{}` / `{/* comment */}` as nothing.
+  Rejecting or dropping empties is a deliberate later refinement, not this step; the tests avoid it.
+- **Whitespace-only text** between an expression and a tag still rides through as text args, same as
+  Step 5 — untouched here.
+
+> **Status:** _pending — add the `expr` branches to `parseChildren` and `generate`, then run `npm test` and hand off to `lbb:commit`._
