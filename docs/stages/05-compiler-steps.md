@@ -46,7 +46,7 @@ can read and run, instead of three big half-built stages that don't do anything 
    - **6a.** Tokenizer: the `expr` token (brace balancing). ✓ done
    - **6b.** Expression children (codegen emits raw value *unquoted*). ✓ done
    - **6c.** Expression attribute values. ✓ done
-7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`. ← *this step*
+7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`. ✓ done
 8. **Spread attributes.** `<div {...rest}/>`.
 9. **Wiring.** A `.jsx` → `.js` transform (CLI or import hook); run an example through it
    end-to-end and confirm it matches the hand-written `createElement` calls from Stage 1.
@@ -1701,5 +1701,12 @@ export function generate(node) {
 - **`<React.Fragment>` long form and keyed fragments** (`<Fragment key=…>`) are out of scope —
   the short `<>…</>` is the whole feature here.
 
-> **Status:** _pending — add the fragment branch to `parseElement`/`parseChildren` and the
-> `isFragment` branch to `generate`, then run `npm test` and hand off to `lbb:commit`._
+> **Status:** done — committed in `22ef9eb` (60 tests green, was 55). The tokenizer was
+> untouched: `<>` is already `<` `>` and `</>` is `< / >`, so a fragment is a tag with the
+> name omitted. `parseElement` detects a `<` followed by `>` (no name) and returns a
+> `{ type: "fragment", children }` node, parsing its children with a `null` `parentTag`
+> sentinel; `parseChildren` learns that a `</>` close has no name and throws a mismatch when
+> a fragment and a named tag are crossed either way. Codegen branches on `isFragment`: the
+> type slot emits the bare identifier `Fragment` (matched by its runtime `Symbol`) and props
+> is always `null`, with children/args unchanged — so `<></>` falls out as
+> `createElement(Fragment, null)` with no trailing comma.
