@@ -46,7 +46,7 @@ can read and run, instead of three big half-built stages that don't do anything 
    - **6a.** Tokenizer: the `expr` token (brace balancing). ✓ done
    - **6b.** Expression children (codegen emits raw value *unquoted*). ✓ done
    - **6c.** Expression attribute values. ✓ done
-7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`.
+7. **Fragments.** `<>...</>` → `createElement(Fragment, null, ...)`. ← *this step*
 8. **Spread attributes.** `<div {...rest}/>`.
 9. **Wiring.** A `.jsx` → `.js` transform (CLI or import hook); run an example through it
    end-to-end and confirm it matches the hand-written `createElement` calls from Stage 1.
@@ -1517,3 +1517,189 @@ children test from 6b. Run `npm test`, watch them fail.
 > string value through `JSON.stringify` — so `<a href="/x" onClick={go}/>` mixes a quoted string and
 > a bare identifier in one props object. Tokenizer needed no changes (6a already scanned `value={x}`
 > as `name = expr`). **Step 6 complete: `{ ... }` now compiles in both children (6b) and attributes (6c).**
+
+---
+
+## Step 7 — Fragments `<>...</>`
+
+**Goal:** `<>hi</>` compiles to `createElement(Fragment, null, "hi")`. A fragment groups
+children **without a wrapper element** — and the whole feature is "detect the missing tag
+name," parser + codegen, with **zero tokenizer changes**.
+
+### The crux
+
+A fragment is an opening tag with an empty name (`<>`) and a matching `</>`. Two insights
+make it small:
+
+1. **The tokenizer is already done.** `<>` is just the tokens `<` `>` with no `name` between
+   them, and `</>` is `<` `/` `>`. `tokenize("<>hi</>")` today already returns
+   `[<, >, text("hi"), <, /, >]`. A fragment is literally a tag whose name is *absent*, and
+   absence needs no token.
+2. **The feature is "detect the missing name."** At a `<`, the parser peeks: if the next
+   token is `>` (not a `name`), it's a fragment open; the matching `</>` has no name either.
+   Codegen then emits the **bare identifier** `Fragment` in the type slot instead of a quoted
+   `"div"` — the same quote-vs-don't-quote distinction as string-vs-expression and (foreshadowed)
+   host-vs-component.
+
+### Test first
+
+Append to `test/compiler.test.js`:
+
+```js
+test("parses a fragment into a fragment node (no tag, no attributes)", () => {
+  assert.deepEqual(parse(tokenize("<>hi</>")), {
+    type: "fragment",
+    children: [{ type: "text", value: "hi" }],
+  });
+});
+
+test("compiles a fragment to createElement(Fragment, ...) — Fragment is a BARE identifier", () => {
+  // not "Fragment" the string — the bare value, like a component type
+  assert.equal(compile("<>hi</>"), 'createElement(Fragment, null, "hi")');
+});
+
+test("compiles a fragment with multiple element children", () => {
+  assert.equal(
+    compile("<><li>a</li><li>b</li></>"),
+    'createElement(Fragment, null, createElement("li", null, "a"), createElement("li", null, "b"))',
+  );
+});
+
+test("an empty fragment emits just Fragment and null props", () => {
+  // regression guard: no children → no trailing comma
+  assert.equal(compile("<></>"), "createElement(Fragment, null)");
+});
+
+test("a fragment nests as a child of an element", () => {
+  assert.equal(
+    compile("<div><>a</></div>"),
+    'createElement("div", null, createElement(Fragment, null, "a"))',
+  );
+});
+```
+
+The bare-identifier test is the point: `Fragment` appears **unquoted**, unlike `"div"`. The
+last test proves fragments compose — `parseChildren` already recurses into `parseElement` for a
+nested `<`, and the fragment branch makes that recursion handle `<>` too. Run `npm test`, watch
+the new ones fail.
+
+### Minimal implementation
+
+**Parser** — `parseElement`, add a fragment branch right after `expect("<")`, *before* the name:
+
+```js
+  function parseElement() {
+    expect("<");
+
+    // Fragment: "<>" — the "<" is immediately followed by ">", no tag name.
+    if (peek() && peek().type === ">") {
+      expect(">");
+      const children = parseChildren(null); // null parentTag marks "this is a fragment"
+      return { type: "fragment", children };
+    }
+
+    const tag = expect("name").value;
+    // ...attributes loop, self-close, open-tag — all unchanged...
+  }
+```
+
+**Parser** — `parseChildren`, teach the closing-tag branch that `</>` has no name (and thread
+the `null` sentinel both ways so mismatches still throw):
+
+```js
+      if (token.type === "<" && peek(1) && peek(1).type === "/") {
+        expect("<");
+        expect("/");
+
+        // fragment close "</>" has no name; element close "</tag>" does
+        if (peek() && peek().type === ">") {
+          expect(">");
+          if (parentTag !== null) {
+            throw new SyntaxError(
+              `Mismatched closing tag: expected </${parentTag}> but found </>`,
+            );
+          }
+          return children;
+        }
+
+        const closeTag = expect("name").value;
+        expect(">");
+        if (parentTag === null) {
+          throw new SyntaxError(
+            `Mismatched closing tag: expected </> but found </${closeTag}>`,
+          );
+        }
+        if (closeTag !== parentTag) {
+          throw new SyntaxError(
+            `Mismatched closing tag: expected </${parentTag}> but found </${closeTag}>`,
+          );
+        }
+        return children;
+      }
+```
+
+**Codegen** — `generate`, branch the *type* and *props* slots on the fragment node; children
+and the final `join` stay exactly as they are:
+
+```js
+export function generate(node) {
+  const isFragment = node.type === "fragment";
+
+  // A host element's type is a quoted string ("div"); a fragment's type is the
+  // BARE identifier `Fragment` — a value the runtime matches by its Symbol,
+  // not a string. Same "quote vs don't-quote" call as string-vs-expression.
+  const type = isFragment ? "Fragment" : JSON.stringify(node.tag);
+
+  // Fragments never carry attributes, so props is always null.
+  const props = isFragment
+    ? "null"
+    : node.attributes.length === 0
+      ? "null"
+      : `{ ${node.attributes
+          .map((attr) => {
+            const value = attr.expression ? attr.value : JSON.stringify(attr.value);
+            return `${JSON.stringify(attr.name)}: ${value}`;
+          })
+          .join(", ")} }`;
+
+  // children + args + return: UNCHANGED
+  const children = node.children.map((child) => {
+    if (child.type === "text") return JSON.stringify(child.value);
+    if (child.type === "expression") return child.value;
+    return generate(child);
+  });
+
+  const args = [type, props, ...children];
+  return `createElement(${args.join(", ")})`;
+}
+```
+
+### Why it works
+
+- **The tokenizer never learned about fragments — and didn't need to.** `<>` and `</>`
+  decompose into tokens already emitted. The feature lives entirely in *interpreting the
+  absence of a `name`*, a parser-and-up concern. A new surface syntax that reuses existing
+  lexical pieces costs zero lexer work — the payoff of the layered design.
+- **`parentTag === null` is the fragment sentinel, threaded through recursion.** A real tag
+  passes its name down so the close matches by string equality; a fragment passes `null`. The
+  two symmetric `null` checks mean both `<>x</div>` and `<div>x</>` throw — you can't close a
+  fragment with a named tag or vice-versa.
+- **Bare `Fragment` vs quoted `"div"` is the type-slot distinction again.** The runtime stored
+  `Fragment` as a `Symbol`; the emitted code must reference that *binding by name*, not a
+  string, so `createElement` receives the actual symbol and recognizes "group without a
+  wrapper." Identical mechanism to the future `<App/>` → bare `App` for components.
+- **Empty fragment falls out for free.** `<></>` parses to `{ type:"fragment", children:[] }`;
+  `[type, props, ...[]].join(", ")` is just `Fragment, null` — no trailing comma, no special
+  case. Same spread-and-join trick that handled childless elements in 5c.
+
+### Scope note
+
+- **The emitted `Fragment` must be in scope where the compiled code runs** — imported from the
+  runtime. The compiler only emits the *reference*; arranging the import is **Step 9 (wiring)**.
+- **Host-vs-component** (`<App/>` → bare `App`, not `"App"`) is still deferred — every named tag
+  is quoted today. Same bare-identifier-in-the-type-slot idea; folds in as its own micro-step.
+- **`<React.Fragment>` long form and keyed fragments** (`<Fragment key=…>`) are out of scope —
+  the short `<>…</>` is the whole feature here.
+
+> **Status:** _pending — add the fragment branch to `parseElement`/`parseChildren` and the
+> `isFragment` branch to `generate`, then run `npm test` and hand off to `lbb:commit`._

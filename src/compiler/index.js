@@ -135,6 +135,12 @@ export function parse(tokens) {
 
   function parseElement() {
     expect("<");
+    if (peek() && peek().type === ">") {
+      expect(">");
+      const children = parseChildren(null);
+
+      return { type: "fragment", children };
+    }
     const tag = expect("name").value;
 
     const attributes = [];
@@ -174,8 +180,25 @@ export function parse(tokens) {
       if (token.type === "<" && peek(1) && peek(1).type === "/") {
         expect("<");
         expect("/");
+
+        if (peek() && peek().type === ">") {
+          expect(">");
+          if (parentTag !== null) {
+            throw new SyntaxError(
+              `Mismatched closing tag: expected </${parentTag}> but found </>`,
+            );
+          }
+
+          return children;
+        }
+
         const closeTag = expect("name").value;
         expect(">");
+        if (parentTag === null) {
+          throw new SyntaxError(
+            `Msimatched closing tag: expected </> but found ${closeTag}`,
+          );
+        }
         if (closeTag !== parentTag) {
           throw new SyntaxError(
             `Msimatched closing tag: expected </${parentTag}> but found </${closeTag}>`,
@@ -211,11 +234,13 @@ export function parse(tokens) {
 }
 
 export function generate(node) {
-  const type = JSON.stringify(node.tag);
+  const isFragment = node.type === "fragment";
+  const type = isFragment ? "Fragment" : JSON.stringify(node.tag);
 
   // No attributes yet
-  const props =
-    node.attributes.length === 0
+  const props = isFragment
+    ? "null"
+    : node.attributes.length === 0
       ? "null"
       : `{ ${node.attributes
           .map((attr) => {

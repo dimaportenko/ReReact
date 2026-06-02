@@ -238,6 +238,13 @@ test("parses an expression child into an expression node", () => {
   });
 });
 
+test("parses fragment to a fragment node (no tag, no attributes)", () => {
+  assert.deepEqual(parse(tokenize("<>hi</>")), {
+    type: "fragment",
+    children: [{ type: "text", value: "hi" }],
+  });
+});
+
 test("compiles an expression child to an UNQUOTED trailing arg", () => {
   assert.equal(compile("<p>{count}</p>"), 'createElement("p", null, count)');
 });
@@ -317,5 +324,27 @@ test("compiles children alonside attributes", () => {
   assert.equal(
     compile('<p id="x">hi</p>'),
     'createElement("p", { "id": "x" }, "hi")',
+  );
+});
+
+test("compiles a fragment to createElement(Fragment, ...) - Fragment is a BARE identifier", () => {
+  assert.equal(compile("<>hi</>"), 'createElement(Fragment, null, "hi")');
+});
+
+test("compiles a fragemnt with multiple elemnet children", () => {
+  assert.equal(
+    compile("<><li>a</li><li>b</li></>"),
+    'createElement(Fragment, null, createElement("li", null, "a"), createElement("li", null, "b"))',
+  );
+});
+
+test("an empty fragment emits just Fragment and null props", () => {
+  assert.equal(compile("<></>"), "createElement(Fragment, null)");
+});
+
+test("a fragment nests as a child of an element", () => {
+  assert.equal(
+    compile("<div><>a</></div>"),
+    'createElement("div", null, createElement(Fragment, null, "a"))',
   );
 });
